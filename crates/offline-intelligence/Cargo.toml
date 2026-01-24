@@ -7,7 +7,7 @@ repository = "https://github.com/OfflineIntelligence/offline-intelligence"
 documentation = "https://docs.rs/offline-intelligence"
 readme = "../../README.md"
 edition = "2021"
-keywords = ["llm", "ai", "machine-learning", "inference", "memory-management", "bindings", "cross-platform"]
+keywords = ["llm", "ai", "machine-learning", "inference", "memory-management"]
 categories = ["science", "algorithms", "asynchronous", "api-bindings"]
 exclude = [
     "target/*",
