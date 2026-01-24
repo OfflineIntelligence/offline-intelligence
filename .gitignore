@@ -1,0 +1,53 @@
+# Build artifacts
+target/
+**/target/
+
+# Distribution files
+dist/
+build/
+
+# Data files
+data/
+**/data/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Resources (large binary files)
+Resources/models/*.gguf
+Resources/bin/
+
+# Node.js (if any)
+node_modules/
+**/node_modules/
+*.tgz
+
+# Python build artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+build/
+dist/
+*.egg-info/
+
+# Java build artifacts
+**/target/
+**/*.jar
+**/*.class
+
+# Cargo lock file (optional - uncomment if you want contributors to use exact versions)
+# Cargo.lock
