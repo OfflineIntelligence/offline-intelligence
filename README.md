@@ -229,8 +229,6 @@ int main() {
 
 ### JavaScript Implementation
 
-``javascript
-const { Config, runServer } = require('offline-intelligence');
 
 async function initializeServer() {
     try {
