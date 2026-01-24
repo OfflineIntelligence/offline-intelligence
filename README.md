@@ -21,19 +21,24 @@ Install the library for your preferred language:
 
 ```bash
 # Rust (Crates.io)
+# https://crates.io/crates/offline-intelligence
 cargo add offline-intelligence
 
 # Python (PyPI)
+# https://pypi.org/project/offline-intelligence/
 pip install offline-intelligence
 
 # JavaScript/Node.js (npm)
+# https://www.npmjs.com/package/offline-intelligence
 npm install offline-intelligence
 
 # Java (JitPack - Maven/Gradle)
-# See Java package documentation at JitPack link above
+# https://jitpack.io/#OfflineIntelligence/offline-intelligence
+# Add to your pom.xml or build.gradle
 
 # C++ (Header-only)
-# Download from GitHub releases or clone repository
+# https://github.com/OfflineIntelligence/offline-intelligence
+# Clone repository and copy header files
 ```
 
 Initialize and start the server with default configuration:
@@ -314,12 +319,12 @@ supported_models = {
 
 The Offline Intelligence Library provides native bindings for five programming languages:
 
-**Package Links:**
-- **Rust**: [Crates.io](https://crates.io/crates/offline-intelligence)
-- **Python**: [PyPI](https://pypi.org/project/offline-intelligence/)
-- **JavaScript**: [npm](https://www.npmjs.com/package/offline-intelligence)
-- **Java**: [JitPack](https://jitpack.io/#OfflineIntelligence/offline-intelligence)
-- **C++**: [GitHub](https://github.com/OfflineIntelligence/offline-intelligence)
+**Direct Package Links:**
+- **Rust**: [Crates.io](https://crates.io/crates/offline-intelligence) - `cargo add offline-intelligence`
+- **Python**: [PyPI](https://pypi.org/project/offline-intelligence/) - `pip install offline-intelligence`
+- **JavaScript**: [npm](https://www.npmjs.com/package/offline-intelligence) - `npm install offline-intelligence`
+- **Java**: [JitPack](https://jitpack.io/#OfflineIntelligence/offline-intelligence) - Maven/Gradle dependency
+- **C++**: [GitHub](https://github.com/OfflineIntelligence/offline-intelligence) - Header-only distribution
 
 Each binding is optimized for idiomatic usage within its respective ecosystem. All bindings share the same underlying Rust core and expose consistent APIs while maintaining language-specific conventions.
 
