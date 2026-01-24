@@ -123,6 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 ### Python Implementation
+
 ```python
 from offline_intelligence import Config, run_server
 import os
@@ -147,7 +148,8 @@ except Exception as e:
 ```
 
 ### Java Implementation
-``java
+
+```
 import com.offlineintelligence.Config;
 import com.offlineintelligence.Server;
 import com.offlineintelligence.OfflineIntelligenceException;
@@ -226,10 +228,10 @@ int main() {
 ```
 
 ### JavaScript Implementation
+
 ``javascript
 const { Config, runServer } = require('offline-intelligence');
 
-// Async function for server initialization
 async function initializeServer() {
     try {
         // Load configuration from environment
@@ -270,6 +272,7 @@ process.on('SIGINT', () => {
 // Start the server
 initializeServer();
 ```
+
 
 ## API Endpoints
 
