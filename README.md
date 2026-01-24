@@ -1,6 +1,6 @@
 # Offline Intelligence Library
 
-High-performance LLM inference engine with memory management. Cross-platform native library with bindings for Python, Java, C++, and JavaScript.
+High performance LLM inference engine with memory management. Cross-platform native library with bindings for Python, Java, C++, and JavaScript.
 
 Crates.io: https://crates.io/crates/offline-intelligence
 
@@ -18,13 +18,13 @@ License: https://github.com/OfflineIntelligence/offline-intelligence/blob/main/L
 
 ## Overview
 
-The Offline Intelligence Library delivers enterprise-grade LLM inference capabilities with intelligent memory management across five programming languages. Built with an 80/20 open-source distribution model, 80% of core functionality is freely available under Apache 2.0 license while advanced proprietary extensions are available through commercial licensing.
+The Offline Intelligence Library delivers enterprise grade LLM inference engine across five programming languages. Built with an open source distribution model, core functionality is freely available under Apache 2.0 license while advanced proprietary extensions are available through commercial licensing.
 
-The library provides optimized performance through hardware-aware resource allocation, supports multiple quantization schemes for different hardware profiles, implements robust security frameworks with compliance alignment, and offers scalable deployment patterns for various production environments. Container orchestration support enables seamless Kubernetes integration, while comprehensive monitoring capabilities ensure production reliability.
+The library provides optimized performance through hardware aware resource allocation, supports multiple quantization schemes for different hardware profiles, implements robust security frameworks with compliance alignment, and offers scalable deployment patterns for various production environments. Container orchestration support enables seamless Kubernetes integration, while comprehensive monitoring capabilities ensure production reliability.
 
 ## Quick Start
 
-Install the library for your preferred language:
+Install the library of your preferred language:
 
 ```bash
 # Rust (Crates.io)
