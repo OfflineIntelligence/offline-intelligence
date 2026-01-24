@@ -5,6 +5,8 @@ High-performance LLM inference engine with memory management. Cross-platform nat
 Crates.io: https://crates.io/crates/offline-intelligence
 PyPI: https://pypi.org/project/offline-intelligence/
 npm: https://www.npmjs.com/package/offline-intelligence
+JitPack: https://jitpack.io/#OfflineIntelligence/offline-intelligence
+GitHub: https://github.com/OfflineIntelligence/offline-intelligence
 License: https://github.com/OfflineIntelligence/offline-intelligence/blob/main/LICENSE
 
 ## Overview
@@ -13,7 +15,43 @@ The Offline Intelligence Library delivers enterprise-grade LLM inference capabil
 
 The library provides optimized performance through hardware-aware resource allocation, supports multiple quantization schemes for different hardware profiles, implements robust security frameworks with compliance alignment, and offers scalable deployment patterns for various production environments. Container orchestration support enables seamless Kubernetes integration, while comprehensive monitoring capabilities ensure production reliability.
 
-## Configuration
+## Quick Start
+
+Install the library for your preferred language:
+
+```bash
+# Rust (Crates.io)
+cargo add offline-intelligence
+
+# Python (PyPI)
+pip install offline-intelligence
+
+# JavaScript/Node.js (npm)
+npm install offline-intelligence
+
+# Java (JitPack - Maven/Gradle)
+# See Java package documentation at JitPack link above
+
+# C++ (Header-only)
+# Download from GitHub releases or clone repository
+```
+
+Initialize and start the server with default configuration:
+
+```rust
+use offline_intelligence::{Config, run_server};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load configuration from environment variables
+    let config = Config::from_env()?;
+    
+    // Start the LLM inference server
+    run_server(config).await?;
+    
+    Ok(())
+}
+```
 
 The library supports comprehensive environment-based configuration with automatic hardware detection:
 
@@ -274,7 +312,16 @@ supported_models = {
 
 ## Language Bindings Overview
 
-The Offline Intelligence Library provides native bindings for five programming languages, each optimized for idiomatic usage within its respective ecosystem. All bindings share the same underlying Rust core and expose consistent APIs while maintaining language-specific conventions.
+The Offline Intelligence Library provides native bindings for five programming languages:
+
+**Package Links:**
+- **Rust**: [Crates.io](https://crates.io/crates/offline-intelligence)
+- **Python**: [PyPI](https://pypi.org/project/offline-intelligence/)
+- **JavaScript**: [npm](https://www.npmjs.com/package/offline-intelligence)
+- **Java**: [JitPack](https://jitpack.io/#OfflineIntelligence/offline-intelligence)
+- **C++**: [GitHub](https://github.com/OfflineIntelligence/offline-intelligence)
+
+Each binding is optimized for idiomatic usage within its respective ecosystem. All bindings share the same underlying Rust core and expose consistent APIs while maintaining language-specific conventions.
 
 ### Cross-Language Consistency
 
