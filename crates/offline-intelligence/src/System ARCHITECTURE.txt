@@ -1,0 +1,48 @@
+Aud.io /
+
+├── .env
+├── .git/
+├── .idea/
+└── Server/
+    ├── Cargo.toml               
+    ├── ChatInterface.py
+    ├── Resources/               
+    │   └── bin/
+    │       └── Linux/           
+    └── src/
+        ├── api/                 
+        │   ├── admin_api.rs
+        │   ├── memory_api.rs
+        │   ├── search_api.rs
+        │   └── mod.rs
+        ├── cache_management/    # Cache System
+        │   ├── cache_bridge.rs
+        │   ├── cache_extractor.rs
+        │   ├── cache_manager.rs
+        │   ├── cache_scorer.rs
+        │   └── mod.rs
+        ├── context_engine/      # AI Context Logic
+        │   ├── context_builder.rs
+        │   ├── orchestrator.rs
+        │   ├── retrieval_planner.rs
+        │   ├── tier_manager.rs
+        │   └── mod.rs
+        ├── memory_db/           # Database & Storage
+        │   ├── migrations/      # SQL Migrations
+        │   ├── conversation_store.rs
+        │   ├── embedding_store.rs
+        │   ├── migration.rs
+        │   ├── schema.rs
+        │   └── summary_store.rs
+        ├── utils/               # Utilities
+        │   ├── text_utils.rs
+        │   └── topic_extractor.rs
+        ├── backend_target.rs
+        ├── config.rs
+        ├── main.rs              # Entry point
+        ├── memory.rs
+        ├── metrics.rs
+        ├── proxy.rs
+        ├── resources.rs
+        ├── runner.rs
+        └── telemetry.rs
