@@ -230,8 +230,7 @@ int main() {
 ### JavaScript Implementation
 
 
-async function initializeServer() {
-    try {
+
         // Load configuration from environment
         const config = Config.fromEnv();
         
