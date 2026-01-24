@@ -183,6 +183,7 @@ public class OfflineIntelligenceApp {
 ```
 
 ### C++ Implementation
+
 ```cpp
 #include <offline_intelligence/offline_intelligence.hpp>
 #include <iostream>
