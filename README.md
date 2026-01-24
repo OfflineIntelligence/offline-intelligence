@@ -40,12 +40,13 @@ pip install offline-intelligence
 npm install offline-intelligence
 
 # Java (JitPack - Maven/Gradle)
-# https://jitpack.io/#OfflineIntelligence/offline-intelligence
 # Add to your pom.xml or build.gradle
+# https://jitpack.io/#OfflineIntelligence/offline-intelligence
+
 
 # C++ (Header-only)
-# https://github.com/OfflineIntelligence/offline-intelligence
 # Clone repository and copy header files
+# https://github.com/OfflineIntelligence/offline-intelligence
 ```
 
 Initialize and start the server with default configuration:
