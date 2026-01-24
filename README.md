@@ -2,17 +2,11 @@
 
 High-performance LLM inference engine with memory management. Cross-platform native library with bindings for Python, Java, C++, and JavaScript.
 
->>>>>>> 4a97d001945d59e94c4d9baf04651020704640e7
-License: https://github.com/OfflineIntelligence/offline-intelligence/blob/main/LICENSE
 Crates.io: https://crates.io/crates/offline-intelligence
 PyPI: https://pypi.org/project/offline-intelligence/
 npm: https://www.npmjs.com/package/offline-intelligence
 JitPack: https://jitpack.io/#OfflineIntelligence/offline-intelligence
 GitHub: https://github.com/OfflineIntelligence/offline-intelligence
-License: https://github.com/OfflineIntelligence/offline-intelligence/blob/main/LICENSE
-=======
-
->>>>>>> 4a97d001945d59e94c4d9baf04651020704640e7
 License: https://github.com/OfflineIntelligence/offline-intelligence/blob/main/LICENSE
 
 ## Overview
@@ -140,7 +134,7 @@ except Exception as e:
 ```
 
 ### Java Usage
-```java
+``java
 import com.offlineintelligence.Config;
 import com.offlineintelligence.Server;
 import com.offlineintelligence.OfflineIntelligenceException;
@@ -218,7 +212,7 @@ int main() {
 ```
 
 ### JavaScript Integration
-```javascript
+``javascript
 const { Config, runServer } = require('offline-intelligence');
 
 // Async function for server initialization
@@ -597,7 +591,7 @@ int main() {
 
 ### Java Example
 
-```java
+``java
 import com.offlineintelligence.*;
 
 public class Main {
@@ -618,7 +612,7 @@ public class Main {
 
 ### JavaScript Example
 
-```javascript
+```
 const { Config, runServer } = require('offline-intelligence');
 
 const config = Config.fromEnv();
