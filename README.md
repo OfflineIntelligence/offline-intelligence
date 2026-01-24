@@ -81,10 +81,10 @@ export API_PORT="8000"                          # API server port
 export REQUESTS_PER_SECOND="24"                 # Rate limiting threshold
 
 # Performance Tuning
-export CTX_SIZE="8192"                          # Context window size
+export CTX_SIZE="64192"                          # Context window size
 export BATCH_SIZE="256"                         # Processing batch size
 export THREADS="6"                              # CPU thread count
-export GPU_LAYERS="20"                          # GPU acceleration layers
+export GPU_LAYERS="16"                          # GPU acceleration layers
 
 # Resource Management
 export HEALTH_TIMEOUT_SECONDS="60"              # Health check timeout
