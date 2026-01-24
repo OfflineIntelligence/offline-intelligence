@@ -89,7 +89,7 @@ export GPU_LAYERS="20"                          # GPU acceleration layers
 # Resource Management
 export HEALTH_TIMEOUT_SECONDS="60"              # Health check timeout
 export MAX_CONCURRENT_STREAMS="4"               # Concurrent request limit
-export PROMETHEUS_PORT="9000"                   # Metrics endpoint port
+export PROMETHEUS_PORT="5555"                   # Metrics endpoint port
 
 # Auto-detection mode (set to "auto" for automatic configuration)
 export THREADS="auto"
