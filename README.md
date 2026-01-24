@@ -9,271 +9,266 @@ License: https://github.com/OfflineIntelligence/offline-intelligence/blob/main/L
 
 ## Overview
 
-The Offline Intelligence Library delivers enterprise-grade LLM inference capabilities with sophisticated memory management across five programming languages. This comprehensive documentation provides detailed technical specifications, architectural insights, deployment strategies, and performance optimization guidelines for production environments.
+The Offline Intelligence Library delivers enterprise-grade LLM inference capabilities with intelligent memory management across five programming languages. Built with an 80/20 open-source distribution model, 80% of core functionality is freely available under Apache 2.0 license while advanced proprietary extensions are available through commercial licensing.
 
-The library implements an 80/20 open-source distribution model where 80% of core functionality is freely available under Apache 2.0 license, while advanced proprietary extensions offering enhanced performance and enterprise features are available through commercial licensing agreements.
+The library provides optimized performance through hardware-aware resource allocation, supports multiple quantization schemes for different hardware profiles, implements robust security frameworks with compliance alignment, and offers scalable deployment patterns for various production environments. Container orchestration support enables seamless Kubernetes integration, while comprehensive monitoring capabilities ensure production reliability.
 
-## Technical Architecture
+## Configuration
 
-### System Design Philosophy
-
-The Offline Intelligence Library employs a modular microservices architecture with clear separation of concerns between computational layers. The system is designed for horizontal scalability, fault tolerance, and efficient resource utilization across diverse hardware configurations.
-
-### Core Component Architecture
-
-#### 1. LLM Integration Layer
-- **Direct Backend Integration**: Native interface with llama.cpp inference engine providing low-latency token generation
-- **Adaptive Model Loading**: Dynamic model switching with zero-downtime capability and automatic health monitoring
-- **Streaming Protocol Optimization**: Custom SSE implementation with backpressure handling and connection resilience
-- **Resource Orchestration**: Intelligent process lifecycle management with automatic recovery mechanisms
-
-#### 2. Memory Management Subsystem
-- **Persistent Storage Engine**: SQLite-based ACID-compliant database with WAL journaling for concurrent access
-- **Hierarchical Data Organization**: Three-tier storage model (hot/warm/cold) with automated data tiering
-- **Conversation Context Management**: Sophisticated session tracking with temporal locality optimization
-- **Migration Framework**: Automated schema evolution with backward compatibility guarantees
-
-#### 3. API Gateway Infrastructure
-- **Protocol Translation Layer**: OpenAI-compatible API interface with extended enterprise endpoints
-- **Traffic Management**: Adaptive rate limiting with burst capacity and priority queuing
-- **Security Framework**: CORS policy enforcement with configurable access controls
-- **Observability Pipeline**: Integrated metrics collection with Prometheus exposition format
-
-#### 4. Monitoring & Telemetry Stack
-- **Performance Instrumentation**: Granular latency tracking across all system components
-- **Resource Utilization Analytics**: Real-time CPU, memory, and GPU consumption monitoring
-- **Health Check Orchestration**: Multi-layer health assessment with cascading failure detection
-- **Log Aggregation**: Structured logging with distributed tracing capabilities
-
-### Distributed Systems Considerations
-
-The architecture incorporates enterprise-grade distributed systems principles:
-
-- **Consistency Models**: Eventual consistency for memory operations with strong consistency for critical transactions
-- **Fault Tolerance**: Graceful degradation patterns with circuit breaker implementations
-- **Scalability Patterns**: Horizontal partitioning strategies for multi-node deployments
-- **Data Replication**: Configurable replication factors with consensus protocols for high availability
-
-## Performance Engineering
-
-### Computational Optimization Strategies
-
-#### Hardware-Aware Resource Allocation
-The system implements sophisticated auto-tuning algorithms that dynamically adjust computational parameters based on detected hardware capabilities:
-
-- **CPU Thread Optimization**: Adaptive thread pool sizing using NUMA topology awareness
-- **GPU Memory Management**: Layer-by-layer VRAM allocation with automatic fallback strategies
-- **Cache Hierarchy Utilization**: L1/L2/L3 cache-aware data structures and access patterns
-- **Memory Bandwidth Optimization**: Coalesced memory access patterns for improved throughput
-
-#### Quantization and Model Optimization
-Support for various quantization schemes with performance-characteristics trade-offs:
-
-- **4-bit Quantization**: Optimal balance of quality versus performance for consumer hardware
-- **8-bit Quantization**: Reduced memory footprint with minimal quality degradation
-- **Full Precision Support**: Unquantized models for maximum accuracy requirements
-- **Mixed Precision Inference**: Dynamic precision switching based on contextual requirements
-
-### Latency Reduction Techniques
-
-#### Pipeline Parallelism
-Implementation of overlapping computation stages to minimize idle time:
-
-- **Token Prefetching**: Anticipatory loading of context tokens based on usage patterns
-- **Batch Scheduling**: Intelligent request batching with deadline-aware prioritization
-- **Asynchronous Processing**: Non-blocking I/O operations with callback-driven workflows
-- **Connection Pooling**: Persistent backend connections with health monitoring
-
-#### Memory Access Optimization
-Sophisticated memory management strategies for reduced latency:
-
-- **Zero-Copy Operations**: Direct memory mapping for frequently accessed data structures
-- **Cache Warming**: Proactive population of CPU caches with predicted access patterns
-- **Memory Pooling**: Pre-allocated buffer pools to eliminate allocation overhead
-- **Garbage Collection Tuning**: Custom memory allocators with reduced fragmentation
-
-## Deployment Architecture
-
-### Container Orchestration Support
-
-The library is designed for modern deployment paradigms with built-in containerization support:
-
-#### Docker Deployment Model
-- **Multi-stage Builds**: Optimized container images with minimal attack surface
-- **Health Check Integration**: Kubernetes-native readiness and liveness probes
-- **Resource Limit Enforcement**: Cgroup-aware resource constraints with graceful degradation
-- **Volume Mount Strategies**: Persistent storage configuration for model and data persistence
-
-#### Kubernetes Integration
-- **Horizontal Pod Autoscaling**: CPU and custom metric-based scaling policies
-- **Service Mesh Compatibility**: Istio/Linkerd integration for advanced traffic management
-- **Secrets Management**: Secure credential handling with vault integration capabilities
-- **Rolling Update Strategies**: Zero-downtime deployment with canary release support
-
-### Cloud-Native Considerations
-
-#### Multi-Cloud Deployment Patterns
-- **Provider-Agnostic Configuration**: Abstracted infrastructure interfaces for cloud portability
-- **Region-Aware Routing**: Geographic load balancing with latency-based routing
-- **Disaster Recovery**: Automated failover mechanisms with cross-region replication
-- **Cost Optimization**: Usage-based resource scaling with budget constraints
-
-#### Edge Computing Support
-- **Lightweight Footprint**: Minimal resource requirements for edge device deployment
-- **Intermittent Connectivity**: Offline operation modes with synchronization protocols
-- **Bandwidth Optimization**: Compressed model updates and differential synchronization
-- **Security Hardening**: Reduced attack surface with minimal dependencies
-
-## Security Architecture
-
-### Threat Model Implementation
-
-The security framework addresses enterprise security requirements through multiple defensive layers:
-
-#### Authentication and Authorization
-- **API Key Management**: Rotatable credentials with granular permission scopes
-- **Role-Based Access Control**: Fine-grained authorization policies for multi-tenant environments
-- **Audit Trail Generation**: Comprehensive activity logging for compliance requirements
-- **Rate Limiting**: Abuse prevention through configurable request quotas
-
-#### Data Protection Mechanisms
-- **Encryption at Rest**: AES-256 encryption for persistent data storage
-- **Transport Security**: TLS 1.3 enforcement with certificate pinning capabilities
-- **Memory Protection**: Secure memory allocation with automatic zeroing
-- **Input Sanitization**: Comprehensive input validation and sanitization pipelines
-
-### Compliance Framework
-
-#### Regulatory Alignment
-- **GDPR Compliance**: Data minimization and right-to-erasure implementation
-- **HIPAA Support**: Protected health information handling with audit capabilities
-- **SOX Compliance**: Financial data protection with segregation of duties
-- **Industry Standards**: Adherence to NIST cybersecurity framework recommendations
-
-## Scalability Planning
-
-### Capacity Planning Guidelines
-
-#### Resource Sizing Recommendations
-Production deployment sizing based on workload characteristics:
-
-**Small Scale (1-10 concurrent users)**
-- CPU: 8 cores minimum
-- RAM: 16GB minimum
-- Storage: 50GB SSD
-- Network: 1Gbps connectivity
-
-**Medium Scale (10-100 concurrent users)**
-- CPU: 16-32 cores
-- RAM: 32-64GB
-- Storage: 200GB NVMe SSD
-- Network: 10Gbps connectivity
-
-**Large Scale (100+ concurrent users)**
-- CPU: 32+ cores with AVX-512 support
-- RAM: 128GB+
-- Storage: 1TB+ NVMe array
-- Network: 25Gbps+ connectivity
-
-#### Performance Benchmarking
-Standardized benchmarking methodologies for capacity planning:
-
-- **Throughput Testing**: Requests per second under various load conditions
-- **Latency Profiling**: Response time percentiles across different operation types
-- **Resource Utilization**: CPU, memory, and I/O consumption patterns
-- **Stress Testing**: Maximum sustainable load with degradation analysis
-
-### High Availability Configuration
-
-#### Redundancy Strategies
-Multi-layer redundancy for mission-critical deployments:
-
-- **Application Layer**: Active-active clustering with automatic failover
-- **Database Layer**: Master-slave replication with automatic promotion
-- **Network Layer**: Multiple ingress points with load balancer redundancy
-- **Storage Layer**: RAID configurations with automatic rebuild capabilities
-
-#### Disaster Recovery Planning
-Comprehensive business continuity strategies:
-
-- **Backup Automation**: Scheduled backups with retention policies
-- **Recovery Point Objectives**: Configurable RPO settings based on business requirements
-- **Recovery Time Objectives**: SLA-driven restoration timeframes
-- **Geographic Distribution**: Multi-region deployment architectures
-
-## Integration Patterns
-
-### Enterprise Integration Scenarios
-
-#### Legacy System Compatibility
-Strategies for integrating with existing enterprise infrastructure:
-
-- **API Gateway Integration**: Reverse proxy configurations for legacy authentication
-- **Message Queue Bridging**: Kafka/RabbitMQ integration for asynchronous processing
-- **Database Synchronization**: Real-time data synchronization with enterprise databases
-- **Monitoring Integration**: Existing monitoring stack compatibility
-
-#### Microservices Architecture
-Patterns for service-oriented deployment:
-
-- **Service Mesh Integration**: Istio/Linkerd service mesh compatibility
-- **API Versioning**: Backward-compatible API evolution strategies
-- **Circuit Breaker Patterns**: Resilience patterns for distributed failures
-- **Event-Driven Architecture**: Pub/sub patterns for loose coupling
-
-### Third-Party Ecosystem
-
-#### Model Provider Integration
-Support for various model formats and providers:
-
-- **GGUF Format Support**: Native support for HuggingFace quantized models
-- **ONNX Runtime Compatibility**: Cross-platform model execution support
-- **Custom Model Adapters**: Plugin architecture for proprietary model formats
-- **Model Registry Integration**: Integration with model management platforms
-
-#### Toolchain Compatibility
-Development and operational toolchain support:
-
-- **CI/CD Pipeline Integration**: GitHub Actions, GitLab CI, Jenkins compatibility
-- **Infrastructure as Code**: Terraform, Ansible, Puppet provisioning support
-- **Container Registry Integration**: Docker Hub, Harbor, ECR compatibility
-- **Monitoring Stack Integration**: Prometheus, Grafana, ELK stack compatibility
-
-## Quick Start
-
-### Installation
-
-Install the library for your preferred language:
+The library supports comprehensive environment-based configuration with automatic hardware detection:
 
 ```bash
-# Rust (Crates.io)
-cargo add offline-intelligence
+# Core LLM Settings
+export LLAMA_BIN="/path/to/llama-server"        # LLM backend binary
+export MODEL_PATH="/path/to/model.gguf"         # GGUF model file path
+export LLAMA_HOST="127.0.0.1"                   # Backend host address
+export LLAMA_PORT="8081"                        # Backend port
 
-# Python (PyPI)
-pip install offline-intelligence
+# API Configuration
+export API_HOST="0.0.0.0"                       # API server bind address
+export API_PORT="8000"                          # API server port
+export REQUESTS_PER_SECOND="24"                 # Rate limiting threshold
 
-# JavaScript/Node.js (npm)
-npm install offline-intelligence
+# Performance Tuning
+export CTX_SIZE="8192"                          # Context window size
+export BATCH_SIZE="256"                         # Processing batch size
+export THREADS="6"                              # CPU thread count
+export GPU_LAYERS="20"                          # GPU acceleration layers
 
-# Java (JitPack - Maven/Gradle)
-# See Java package documentation
+# Resource Management
+export HEALTH_TIMEOUT_SECONDS="60"              # Health check timeout
+export MAX_CONCURRENT_STREAMS="4"               # Concurrent request limit
+export PROMETHEUS_PORT="9000"                   # Metrics endpoint port
 
-# C++ (Header-only)
-# Download from GitHub releases
+# Auto-detection mode (set to "auto" for automatic configuration)
+export THREADS="auto"
+export GPU_LAYERS="auto"
+export CTX_SIZE="auto"
+export BATCH_SIZE="auto"
 ```
 
-### Basic Usage
+## Language Bindings
 
-Initialize and start the server with default configuration:
-
+### Rust Implementation
 ```rust
-use offline_intelligence::{Config, run_server};
+use offline_intelligence::{Config, run_server, LLMEngine, MemoryDatabase};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize configuration with environment variables
     let config = Config::from_env()?;
+    
+    // Create LLM engine instance
+    let llm_engine = LLMEngine::new(config.clone());
+    
+    // Initialize the engine asynchronously
+    llm_engine.initialize().await?;
+    
+    // Start the inference server
     run_server(config).await?;
+    
     Ok(())
+}
+```
+
+### Python Integration
+```python
+from offline_intelligence import Config, run_server
+import os
+
+# Configure environment variables
+os.environ['LLAMA_BIN'] = '/usr/local/bin/llama-server'
+os.environ['MODEL_PATH'] = './models/llama-3.gguf'
+
+# Load configuration from environment
+config = Config.from_env()
+
+# Validate configuration
+if not config.validate():
+    raise ValueError("Invalid configuration")
+
+# Start server with error handling
+try:
+    success = run_server(config)
+    print(f"Server started successfully: {success}")
+except Exception as e:
+    print(f"Server startup failed: {e}")
+```
+
+### Java Usage
+```java
+import com.offlineintelligence.Config;
+import com.offlineintelligence.Server;
+import com.offlineintelligence.OfflineIntelligenceException;
+
+public class OfflineIntelligenceApp {
+    public static void main(String[] args) {
+        try {
+            // Load configuration from environment
+            Config config = Config.fromEnv();
+            
+            // Configure server parameters
+            config.setApiHost("0.0.0.0");
+            config.setApiPort(8080);
+            config.setThreads(8);
+            
+            // Start the server
+            boolean success = Server.runServer(config);
+            
+            if (success) {
+                System.out.println("Server started on port: " + config.getApiPort());
+                System.out.println("Version: " + Server.version());
+            } else {
+                System.err.println("Failed to start server");
+            }
+            
+        } catch (OfflineIntelligenceException e) {
+            System.err.println("Configuration error: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("Unexpected error: " + e.getMessage());
+        }
+    }
+}
+```
+
+### C++ Implementation
+```cpp
+#include <offline_intelligence/offline_intelligence.hpp>
+#include <iostream>
+#include <cstdlib>
+
+int main() {
+    try {
+        // Set environment variables programmatically
+        setenv("LLAMA_BIN", "/opt/llama/llama-server", 1);
+        setenv("MODEL_PATH", "./models/mistral.gguf", 1);
+        
+        // Load configuration from environment
+        auto config = offline_intelligence::Config::from_env();
+        
+        // Override specific settings
+        config.api_host = "0.0.0.0";
+        config.api_port = 9000;
+        config.ctx_size = 16384;
+        
+        // Start server and check result
+        bool success = offline_intelligence::Server::run_server(config);
+        
+        if (success) {
+            std::cout << "Server version: " 
+                      << offline_intelligence::Server::version() << std::endl;
+            std::cout << "Listening on: " << config.api_host 
+                      << ":" << config.api_port << std::endl;
+        } else {
+            std::cerr << "Failed to start server" << std::endl;
+            return 1;
+        }
+        
+    } catch (const offline_intelligence::OfflineIntelligenceException& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+    
+    return 0;
+}
+```
+
+### JavaScript Integration
+```javascript
+const { Config, runServer } = require('offline-intelligence');
+
+// Async function for server initialization
+async function initializeServer() {
+    try {
+        // Load configuration from environment
+        const config = Config.fromEnv();
+        
+        // Configure server settings
+        config.apiHost = '0.0.0.0';
+        config.apiPort = 8080;
+        config.modelPath = './models/code-llama.gguf';
+        
+        // Validate configuration before startup
+        if (!config.isValid()) {
+            throw new Error('Invalid server configuration');
+        }
+        
+        // Start server with async/await
+        const success = await runServer(config);
+        
+        if (success) {
+            console.log(`Server started successfully on ${config.apiHost}:${config.apiPort}`);
+            console.log(`Model loaded: ${config.modelPath}`);
+        } else {
+            console.error('Server failed to start');
+        }
+        
+    } catch (error) {
+        console.error('Server initialization error:', error.message);
+        process.exit(1);
+    }
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', () => {
+    console.log('Shutting down server...');
+    process.exit(0);
+});
+
+// Start the server
+initializeServer();
+```
+
+## API Endpoints
+
+The library exposes standard RESTful endpoints for LLM inference:
+
+```bash
+# Streaming generation endpoint
+POST /generate/stream
+Content-Type: application/json
+
+{
+    "messages": [
+        {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "session_id": "session_123",
+    "temperature": 0.7,
+    "max_tokens": 1024
+}
+
+# Health check endpoint
+GET /healthz
+
+# Metrics endpoint (Prometheus format)
+GET /metrics
+
+# Readiness check
+GET /readyz
+```
+
+## Model Support
+
+The library supports various quantized models in GGUF format:
+
+```python
+# Model configuration examples
+supported_models = {
+    "llama3_8b": {
+        "path": "./models/llama3-8b-q4.gguf",
+        "context_size": 8192,
+        "recommended_vram": "8GB"
+    },
+    "mistral_7b": {
+        "path": "./models/mistral-7b-q4.gguf", 
+        "context_size": 32768,
+        "recommended_vram": "12GB"
+    },
+    "codellama_13b": {
+        "path": "./models/codellama-13b-q4.gguf",
+        "context_size": 16384,
+        "recommended_vram": "16GB"
+    }
 }
 ```
 
@@ -587,49 +582,29 @@ console.log(`Started: ${success}`);
 
 - **GitHub Repository**: https://github.com/OfflineIntelligence/offline-intelligence
 - **Issue Tracker**: https://github.com/OfflineIntelligence/offline-intelligence/issues
-- **Documentation Portal**: Comprehensive API references and integration guides
+- **API Documentation**: Comprehensive reference for all language bindings
 - **Release Notes**: Detailed changelogs and migration guides
 - **Security Advisories**: CVE notifications and vulnerability disclosures
 
 ### Community Support
 
-- **Discord Server**: Real-time community discussions and peer support
-- **Discussion Forums**: Long-form technical discussions and best practices
-- **Stack Overflow**: Community-maintained Q&A for implementation questions
 - **GitHub Discussions**: Official project discussions and announcements
+- **Stack Overflow**: Community-maintained Q&A for implementation questions
+- **Documentation Portal**: API references and integration guides
 
 ### Enterprise Support
 
 - **Commercial Licensing**: Priority support with SLA guarantees
 - **Consulting Services**: Architecture reviews and deployment assistance
 - **Training Programs**: Custom workshops and certification programs
-- **Security Audits**: Third-party security assessments and compliance reviews
 
-### Documentation Structure
-
-The documentation ecosystem includes:
-
-**Core Documentation**
-- API reference manuals for all language bindings
-- Configuration guides and best practices
-- Performance tuning recommendations
-- Migration guides for version upgrades
-
-**Integration Guides**
-- Platform-specific deployment tutorials
-- CI/CD pipeline integration examples
-- Monitoring and observability setup
-- Security hardening guidelines
-
-**Advanced Topics**
-- Custom model integration procedures
-- Extension development documentation
-- Performance benchmarking methodologies
-- Troubleshooting and debugging techniques
+The library follows standard open-source practices with Apache 2.0 licensing for the core 80% functionality, while advanced enterprise features are available through commercial agreements.
 
 
 
 
 ## License
 
-This project is licensed under the Apache 2.0 License - see the LICENSE file for details.
+This project is licensed under the Apache 2.0 License. The core 80% of functionality is open source, while proprietary extensions are available through separate commercial licensing agreements.
+
+See the [LICENSE](LICENSE) file for details.
