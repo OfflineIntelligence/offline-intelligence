@@ -3,10 +3,17 @@
 High-performance LLM inference engine with memory management. Cross-platform native library with bindings for Python, Java, C++, and JavaScript.
 
 Crates.io: https://crates.io/crates/offline-intelligence
+
 PyPI: https://pypi.org/project/offline-intelligence/
+
 npm: https://www.npmjs.com/package/offline-intelligence
+
 JitPack: https://jitpack.io/#OfflineIntelligence/offline-intelligence
+
+C++: https://github.com/OfflineIntelligence/offline-intelligence
+
 GitHub: https://github.com/OfflineIntelligence/offline-intelligence
+
 License: https://github.com/OfflineIntelligence/offline-intelligence/blob/main/LICENSE
 
 ## Overview
