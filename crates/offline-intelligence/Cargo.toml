@@ -1,6 +1,6 @@
 [package]
 name = "offline-intelligence"
-version = "0.1.1"
+version = "0.1.2"
 description = "High-performance library for offline AI inference with context management and memory optimization"
 license = "Apache-2.0"
 repository = "https://github.com/offline-intelligence/library"
