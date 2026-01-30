@@ -6,7 +6,7 @@ Java bindings for the Offline Intelligence Library using JNI, providing offline 
 
 ```bash
 # Build the native library
-cargo build --release
+cargo build release
 
 # Build Java classes and create JAR
 ./build.sh
@@ -49,24 +49,24 @@ public class Example {
 
 ## Features
 
-- **Offline AI Inference**: Run LLMs locally without internet connection
-- **Context Management**: Intelligent conversation context optimization
-- **Memory Search**: Hybrid semantic and keyword search across conversations
-- **Multi-format Support**: Support for GGUF, GGML, ONNX, TensorRT, and Safetensors models
-- **Cross-platform**: Works on Windows, macOS, and Linux
+ **Offline AI Inference**: Run LLMs locally without internet connection
+ **Context Management**: Intelligent conversation context optimization
+ **Memory Search**: Hybrid semantic and keyword search across conversations
+ **Multiformat Support**: Support for GGUF, GGML, ONNX, TensorRT, and Safetensors models
+ **Crossplatform**: Works on Windows, macOS, and Linux
 
 ## Requirements
 
-- Java 8 or higher
-- Rust toolchain for building from source
-- Compatible LLM model file
+ Java 8 or higher
+ Rust toolchain for building from source
+ Compatible LLM model file
 
 ## Configuration
 
 Set environment variables before running:
 
 ```bash
-export LLAMA_BIN="/path/to/llama-binary"
+export LLAMA_BIN="/path/to/llamabinary"
 export MODEL_PATH="/path/to/model.gguf"
 export CTX_SIZE="8192"
 export BATCH_SIZE="256"

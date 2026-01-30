@@ -1,11 +1,11 @@
 # Offline Intelligence JavaScript Bindings
 
-JavaScript/Node.js bindings for the Offline Intelligence Library using N-API, providing offline AI inference capabilities with context management and memory optimization.
+JavaScript/Node.js bindings for the Offline Intelligence Library using NAPI, providing offline AI inference capabilities with context management and memory optimization.
 
 ## Installation
 
 ```bash
-npm install offline-intelligence
+npm install offlineintelligence
 ```
 
 Or build from source:
@@ -18,7 +18,7 @@ npm run build
 ## Quick Start
 
 ```javascript
-const { OfflineIntelligence, Message, Config } = require('offline-intelligence');
+const { OfflineIntelligence, Message, Config } = require('offlineintelligence');
 
 async function main() {
   // Initialize the library
@@ -54,26 +54,26 @@ main().catch(console.error);
 
 ## Features
 
-- **Offline AI Inference**: Run LLMs locally without internet connection
-- **Context Management**: Intelligent conversation context optimization
-- **Memory Search**: Hybrid semantic and keyword search across conversations
-- **Multi-format Support**: Support for GGUF, GGML, ONNX, TensorRT, and Safetensors models
-- **Cross-platform**: Works on Windows, macOS, and Linux
-- **Async/Await Support**: Full Promise-based API for modern JavaScript
+ **Offline AI Inference**: Run LLMs locally without internet connection
+ **Context Management**: Intelligent conversation context optimization
+ **Memory Search**: Hybrid semantic and keyword search across conversations
+ **Multiformat Support**: Support for GGUF, GGML, ONNX, TensorRT, and Safetensors models
+ **Crossplatform**: Works on Windows, macOS, and Linux
+ **Async/Await Support**: Full Promisebased API for modern JavaScript
 
 ## Requirements
 
-- Node.js 14.0.0 or higher
-- npm or yarn
-- Rust toolchain for building from source
-- Compatible LLM model file
+ Node.js 14.0.0 or higher
+ npm or yarn
+ Rust toolchain for building from source
+ Compatible LLM model file
 
 ## Configuration
 
 The library reads configuration from environment variables:
 
 ```bash
-export LLAMA_BIN="/path/to/llama-binary"
+export LLAMA_BIN="/path/to/llamabinary"
 export MODEL_PATH="/path/to/model.gguf"
 export CTX_SIZE="8192"
 export BATCH_SIZE="256"
@@ -86,7 +86,7 @@ export GPU_LAYERS="20"
 Full TypeScript definitions are included:
 
 ```typescript
-import { OfflineIntelligence, Message, Config } from 'offline-intelligence';
+import { OfflineIntelligence, Message, Config } from 'offlineintelligence';
 
 const oi = new OfflineIntelligence();
 const messages: Message[] = [
