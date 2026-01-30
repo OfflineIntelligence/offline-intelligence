@@ -32,6 +32,17 @@ All packages use the same version number defined in:
 - `crates/offline-intelligence/Cargo.toml` (canonical source)
 - Sync versions in binding packages before publishing
 
+## Current Publication Status (as of v0.1.2)
+
+✅ **Published Successfully:**
+- `offline-intelligence` v0.1.2 (core library) - crates.io
+- `offline_intelligence_java` v0.1.2 (Java bindings) - crates.io
+- `offline_intelligence_js` v0.1.2 (JavaScript bindings) - crates.io
+- `offline_intelligence_cpp` v0.1.2 (C++ bindings) - crates.io
+
+❌ **Pending Publication:**
+- Python bindings - Blocked (Python not installed on build system)
+
 ## Publishing Process
 
 ### Option 1: Automated Publishing (Recommended)

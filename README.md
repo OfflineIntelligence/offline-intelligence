@@ -23,6 +23,36 @@ Offline Intelligence Library provides developers with powerful tools for running
 - **C++** (C FFI bindings)
 - **Rust** (Native library)
 
+## Installation
+
+### Rust
+
+```bash
+cargo add offline-intelligence
+```
+
+### Java
+
+```bash
+cargo add offline_intelligence_java
+```
+
+### JavaScript/Node.js
+
+```bash
+cargo add offline_intelligence_js
+```
+
+### C++
+
+```bash
+cargo add offline_intelligence_cpp
+```
+
+### Python
+
+Python bindings are pending publication due to build system limitations.
+
 ## Quick Start
 
 ### Prerequisites
