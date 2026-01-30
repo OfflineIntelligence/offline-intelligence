@@ -1,0 +1,10 @@
+prefix=${pcfiledir}
+exec_prefix=${prefix}
+libdir=${exec_prefix}
+includedir=${prefix}/include
+
+Name: offline-intelligence-cpp
+Description: C++ bindings for Offline Intelligence Library
+Version: 0.1.2
+Libs: -L${libdir} -loffline_intelligence_cpp
+Cflags: -I${includedir}
