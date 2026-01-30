@@ -8,22 +8,22 @@ Offline Intelligence Library empowers developers to run powerful large language 
 
 ### Core Capabilities
 
-**🧠 Intelligent Context Management**
+**Intelligent Context Management**
 - Automatically optimizes conversation history to maintain relevant context
 - Prevents context window overflow while preserving important information
 - Dynamically manages memory usage for efficient long-running conversations
 
-**🔍 Hybrid Memory Search**
+**Hybrid Memory Search**
 - Combines semantic understanding with keyword matching
 - Searches across conversation histories to find relevant context
 - Enables contextual responses based on past interactions
 
-**⚡ Multi-Format Model Support**
+**Multi-Format Model Support**
 - Works with GGUF, GGML, ONNX, TensorRT, and Safetensors formats
 - Supports popular models like Llama, Mistral, and custom fine-tuned variants
 - Flexible model loading and switching capabilities
 
-**🌐 Cross-Platform Compatibility**
+**Cross-Platform Compatibility**
 - Native support for Windows, macOS, and Linux
 - Language bindings for Python, Java, JavaScript/Node.js, C++, and Rust
 - Consistent API across all platforms
