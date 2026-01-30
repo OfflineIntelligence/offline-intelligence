@@ -1,11 +1,9 @@
-// "D:\_ProjectWorks\AUDIO_Interface\Server\src\memory_db\schema.rs"
+﻿
 //! Database schema definitions for the memory system
-
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-
-/// Represents a conversation session
+/
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -13,20 +11,17 @@ pub struct Session {
     pub last_accessed: DateTime<Utc>,
     pub metadata: SessionMetadata,
 }
-
-// Chat persistence: Session metadata with serde defaults for backward compatibility with existing database records
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionMetadata {
     pub title: Option<String>,
-    #[serde(default)]  // Handle old records missing this field
+    #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default)]  // Handle old records missing this field
+    #[serde(default)]
     pub user_defined: HashMap<String, String>,
-    #[serde(default)]  // Handle old records missing this field
+    #[serde(default)]
     pub pinned: bool,
 }
-
-/// Represents a single message in a conversation
+/
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredMessage {
     pub id: i64,
@@ -39,8 +34,7 @@ pub struct StoredMessage {
     pub importance_score: f32,
     pub embedding_generated: bool,
 }
-
-/// Represents a conversation summary
+/
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
     pub id: i64,
@@ -52,8 +46,7 @@ pub struct Summary {
     pub key_topics: Vec<String>,
     pub generated_at: DateTime<Utc>,
 }
-
-/// Represents a preserved detail from a message
+/
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Detail {
     pub id: i64,
@@ -66,8 +59,7 @@ pub struct Detail {
     pub accessed_count: i32,
     pub last_accessed: DateTime<Utc>,
 }
-
-/// Represents an embedding vector for semantic search
+/
 #[derive(Debug, Clone)]
 pub struct Embedding {
     pub id: i64,
@@ -76,8 +68,7 @@ pub struct Embedding {
     pub embedding_model: String,
     pub generated_at: DateTime<Utc>,
 }
-
-/// Represents KV snapshot for cache management
+/
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KvSnapshot {
     pub id: i64,
@@ -90,23 +81,20 @@ pub struct KvSnapshot {
     pub size_bytes: i64,
     pub created_at: DateTime<Utc>,
 }
-
-/// Represents search result
+/
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub message: StoredMessage,
     pub similarity_score: f32,
     pub source: SearchSource,
 }
-
 #[derive(Debug, Clone)]
 pub enum SearchSource {
     Semantic,
     Keyword,
     Hybrid,
 }
-
-/// Database statistics
+/
 #[derive(Debug, Clone)]
 pub struct DatabaseStats {
     pub total_sessions: i64,
@@ -116,8 +104,7 @@ pub struct DatabaseStats {
     pub total_embeddings: i64,
     pub database_size_bytes: i64,
 }
-
-/// SQL statements for table creation
+/
 pub const SCHEMA_SQL: &str = "
 -- Sessions table
 CREATE TABLE IF NOT EXISTS sessions (
@@ -126,7 +113,6 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_accessed TIMESTAMP NOT NULL,
     metadata TEXT NOT NULL
 );
-
 -- Messages table
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,7 +127,6 @@ CREATE TABLE IF NOT EXISTS messages (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     UNIQUE(session_id, message_index)
 );
-
 -- Summaries table
 CREATE TABLE IF NOT EXISTS summaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,7 +140,6 @@ CREATE TABLE IF NOT EXISTS summaries (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     UNIQUE(session_id, message_range_start, message_range_end)
 );
-
 -- Details table
 CREATE TABLE IF NOT EXISTS details (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,7 +154,6 @@ CREATE TABLE IF NOT EXISTS details (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
 );
-
 -- Embeddings table
 CREATE TABLE IF NOT EXISTS embeddings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,7 +164,6 @@ CREATE TABLE IF NOT EXISTS embeddings (
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
     UNIQUE(message_id, embedding_model)
 );
-
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);

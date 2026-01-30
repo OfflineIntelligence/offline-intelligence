@@ -1,5 +1,4 @@
-extern crate napi_build;
-
+﻿extern crate napi_build;
 fn main() {
     napi_build::setup();
 }

@@ -1,14 +1,11 @@
-//! Thread-based server implementation
-//!
+﻿//!
 //! This module provides the server startup that uses thread-based
 //! shared memory architecture. All API handlers access state through
-//! Arc-wrapped shared memory (UnifiedAppState) — zero network hops
+//! Arc-wrapped shared memory (UnifiedAppState) â€” zero network hops
 //! between components. The only network call is to the localhost llama-server.
-
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, debug};
-
 use crate::{
     config::Config,
     shared_state::{SharedState, UnifiedAppState},
@@ -16,8 +13,7 @@ use crate::{
     worker_threads::{ContextWorker, CacheWorker, DatabaseWorker, LLMWorker},
     memory_db::MemoryDatabase,
 };
-
-/// Thread-based unified application state (internal, used during initialization)
+/
 #[derive(Clone)]
 pub struct ThreadBasedAppState {
     pub shared_state: Arc<SharedState>,
@@ -27,16 +23,13 @@ pub struct ThreadBasedAppState {
     pub database_worker: Arc<DatabaseWorker>,
     pub llm_worker: Arc<LLMWorker>,
 }
-
-/// Run server with thread-based architecture
+/
 pub async fn run_thread_server(cfg: Config) -> anyhow::Result<()> {
     crate::telemetry::init_tracing();
     crate::metrics::init_metrics();
     cfg.print_config();
-
     info!("Starting thread-based server architecture");
 
-    // Initialize database
     let memory_db_path = std::path::Path::new("./data/conversations.db");
     let memory_database = match MemoryDatabase::new(memory_db_path) {
         Ok(db) => {
@@ -49,17 +42,15 @@ pub async fn run_thread_server(cfg: Config) -> anyhow::Result<()> {
         }
     };
 
-    // Initialize shared state (creates LLM worker internally with backend_url)
     let shared_state = Arc::new(SharedState::new(cfg.clone(), memory_database.clone())?);
 
-    // Initialize Runtime Manager for multi-format model support
-    info!("🚀 Initializing Runtime Manager for multi-format model support");
+    info!("ðŸš€ Initializing Runtime Manager for multi-format model support");
     let runtime_manager = Arc::new(crate::model_runtime::RuntimeManager::new());
-    
-    // Configure and initialize the runtime based on detected model format
+
+
     let runtime_config = crate::model_runtime::RuntimeConfig {
         model_path: std::path::PathBuf::from(&cfg.model_path),
-        format: crate::model_runtime::ModelFormat::GGUF, // Will be auto-detected
+        format: crate::model_runtime::ModelFormat::GGUF,
         host: cfg.llama_host.clone(),
         port: cfg.llama_port,
         context_size: cfg.ctx_size,
@@ -69,27 +60,25 @@ pub async fn run_thread_server(cfg: Config) -> anyhow::Result<()> {
         runtime_binary: Some(std::path::PathBuf::from(&cfg.llama_bin)),
         extra_config: serde_json::json!({}),
     };
-    
-    // Initialize with automatic format detection
+
+
     match runtime_manager.initialize_auto(runtime_config).await {
         Ok(base_url) => {
-            info!("✅ Model runtime initialized successfully");
+            info!("âœ… Model runtime initialized successfully");
             info!("   Runtime endpoint: {}", base_url);
-            // Update backend_url in shared state config if needed
+
         }
         Err(e) => {
-            warn!("⚠️  Runtime initialization failed: {}", e);
+            warn!("âš ï¸  Runtime initialization failed: {}", e);
             warn!("   The system will attempt to use the configured backend_url directly");
         }
     }
 
-    // Initialize workers
     let context_worker: Arc<ContextWorker> = Arc::new(ContextWorker::new(shared_state.clone()));
     let cache_worker: Arc<CacheWorker> = Arc::new(CacheWorker::new(shared_state.clone()));
     let database_worker: Arc<DatabaseWorker> = Arc::new(DatabaseWorker::new(shared_state.clone()));
     let llm_worker = shared_state.llm_worker.clone();
 
-    // Initialize cache manager
     let cache_manager = match crate::cache_management::create_default_cache_manager(
         crate::cache_management::KVCacheConfig::default(),
         memory_database.clone(),
@@ -104,13 +93,12 @@ pub async fn run_thread_server(cfg: Config) -> anyhow::Result<()> {
         }
     };
 
-    // Initialize context orchestrator
     let context_orchestrator = match crate::context_engine::create_default_orchestrator(
         memory_database.clone(),
     ).await {
         Ok(mut orchestrator) => {
-            // Inject LLM worker so the orchestrator can generate query embeddings
-            // for semantic search when the hot KV cache doesn't have the answer.
+
+
             orchestrator.set_llm_worker(shared_state.llm_worker.clone());
             info!("Context orchestrator initialized with semantic search support");
             Some(orchestrator)
@@ -121,50 +109,39 @@ pub async fn run_thread_server(cfg: Config) -> anyhow::Result<()> {
         }
     };
 
-    // Initialize thread pool
     let thread_pool_config = ThreadPoolConfig::new(&cfg);
     let mut thread_pool = ThreadPool::new(thread_pool_config, shared_state.clone());
     thread_pool.start().await?;
 
-    // Update shared state with initialized components
     {
         let mut cache_guard = shared_state.cache_manager.write()
             .map_err(|_| anyhow::anyhow!("Failed to acquire cache manager write lock"))?;
         *cache_guard = cache_manager;
 
-        // LLM runtime is now managed by RuntimeManager, no need to initialize here
-        // shared_state.initialize_llm_runtime()?;  // Removed - handled by RuntimeManager
+
     }
 
-    // Initialize embedding HNSW index from any previously stored embeddings
-    // This makes semantic search available immediately on startup.
+
     if let Err(e) = shared_state.database_pool.embeddings.initialize_index("llama-server") {
         debug!("Embedding index init: {} (will build on first embedding store)", e);
     } else {
         info!("Embedding HNSW index loaded from existing data");
     }
 
-    // Set context orchestrator (tokio RwLock for async access from handlers)
     {
         let mut orch_guard = shared_state.context_orchestrator.write().await;
         *orch_guard = context_orchestrator;
     }
 
-    // Build the unified app state for the router
     let unified_state = UnifiedAppState::new(shared_state.clone());
 
-    // Start HTTP server
     info!("Starting HTTP server on {}:{}", cfg.api_host, cfg.api_port);
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", cfg.api_host, cfg.api_port)).await?;
-
     let app = build_compatible_router(unified_state);
-
     axum::serve(listener, app).await?;
-
     Ok(())
 }
-
-/// Build router for 1-hop architecture
+/
 fn build_compatible_router(state: UnifiedAppState) -> axum::Router {
     use axum::{
         Router,
@@ -176,18 +153,16 @@ fn build_compatible_router(state: UnifiedAppState) -> axum::Router {
         timeout::TimeoutLayer,
     };
     use std::time::Duration;
-
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::PUT, axum::http::Method::DELETE])
         .allow_headers(Any);
-
     Router::new()
-        // Core 1-hop streaming endpoint
+
         .route("/generate/stream", post(crate::api::stream_api::generate_stream))
-        // Title generation via shared memory -> LLM worker
+
         .route("/generate/title", post(crate::api::title_api::generate_title))
-        // Conversation CRUD via shared memory -> database
+
         .route("/conversations", get(crate::api::conversation_api::get_conversations))
         .route("/conversations/:id", get(crate::api::conversation_api::get_conversation))
         .route("/conversations/:id/title", put(crate::api::conversation_api::update_conversation_title))
@@ -199,3 +174,5 @@ fn build_compatible_router(state: UnifiedAppState) -> axum::Router {
         .layer(TimeoutLayer::new(Duration::from_secs(600)))
         .with_state(state)
 }
+
+

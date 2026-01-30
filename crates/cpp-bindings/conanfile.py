@@ -1,3 +1,4 @@
+﻿#!/usr/bin/env python3
 from conans import ConanFile, CMake, tools
 import os
 
@@ -32,6 +33,7 @@ class OfflineIntelligenceConan(ConanFile):
     def package_info(self):
         self.cpp_info.libs = ["offline_intelligence_cpp"]
         self.cpp_info.includedirs = ["include"]
-        
-        # Set C++ standard requirement
+
+
         self.cpp_info.cxxflags = ["-std=c++17"] if self.settings.compiler != "Visual Studio" else ["/std:c++17"]
+

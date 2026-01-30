@@ -1,14 +1,13 @@
+﻿#!/usr/bin/env python3
 from setuptools import setup, find_packages
 from pyo3_setuptools import build_ext
 import os
 
-# Read the README file
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-# Read requirements
 with open("requirements.txt", "r", encoding="utf-8") as fh:
-    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("
 
 setup(
     name="offline-intelligence",
@@ -55,3 +54,5 @@ setup(
         "machine-learning", "natural-language-processing", "rust"
     ],
 )
+
+

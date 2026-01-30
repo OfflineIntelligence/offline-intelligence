@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id 'java-library'
     id 'maven-publish'
     id 'signing'
@@ -27,19 +27,19 @@ publishing {
     publications {
         maven(MavenPublication) {
             from components.java
-            
+
             pom {
                 name = 'Offline Intelligence Library'
                 description = 'High-performance library for offline AI inference with context management and memory optimization'
-                url = 'https://github.com/offline-intelligence/library'
-                
+                url = 'https:
+
                 licenses {
                     license {
                         name = 'Apache License, Version 2.0'
-                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                        url = 'https:
                     }
                 }
-                
+
                 developers {
                     developer {
                         id = 'offline-intelligence'
@@ -47,20 +47,20 @@ publishing {
                         email = 'intelligencedevelopment.io@gmail.com'
                     }
                 }
-                
+
                 scm {
-                    connection = 'scm:git:git://github.com/offline-intelligence/library.git'
-                    developerConnection = 'scm:git:ssh://github.com:offline-intelligence/library.git'
-                    url = 'https://github.com/offline-intelligence/library/tree/main'
+                    connection = 'scm:git:git:
+                    developerConnection = 'scm:git:ssh:
+                    url = 'https:
                 }
             }
         }
     }
-    
+
     repositories {
         maven {
             name = "OSSRH"
-            url = "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/"
+            url = "https:
             credentials {
                 username = findProperty("ossrhUsername") ?: System.getenv("OSSRH_USERNAME")
                 password = findProperty("ossrhPassword") ?: System.getenv("OSSRH_PASSWORD")
@@ -79,3 +79,4 @@ javadoc {
         options.addBooleanOption('html5', true)
     }
 }
+
