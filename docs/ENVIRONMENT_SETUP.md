@@ -8,12 +8,12 @@ Proper environment setup is crucial for optimal performance and functionality of
 
 Recommended project structure:
 ```
-your-project/
+yourproject/
 ├── src/                 # Your source code
 ├── models/              # AI model files
-│   └── llama-2-7b.gguf
+│   └── llama27b.gguf
 ├── binaries/            # LLaMA binaries
-│   └── llama-bin.exe
+│   └── llamabin.exe
 ├── config/              # Configuration files
 │   └── .env
 └── examples/            # Test examples
@@ -25,10 +25,10 @@ your-project/
 
 ```bash
 # Model file path (absolute or relative)
-MODEL_PATH="./models/llama-2-7b.Q4_K_M.gguf"
+MODEL_PATH="./models/llama27b.Q4_K_M.gguf"
 
 # LLaMA binary path
-LLAMA_BIN="./binaries/llama-bin"
+LLAMA_BIN="./binaries/llamabin"
 
 # Context size (tokens)
 CTX_SIZE="8192"
@@ -43,38 +43,38 @@ THREADS="6"             # CPU threads to use
 GPU_LAYERS="20"         # GPU acceleration layers
 
 # Memory management
-MAIN_GPU="0"            # Which GPU to use (0-indexed)
-TENSOR_SPLIT="1"        # Tensor splitting for multi-GPU
+MAIN_GPU="0"            # Which GPU to use (0indexed)
+TENSOR_SPLIT="1"        # Tensor splitting for multiGPU
 
 # Advanced options
 FREQ_PENALTY="0.5"      # Frequency penalty
 PRESENCE_PENALTY="0.5"  # Presence penalty
 TEMPERATURE="0.8"       # Sampling temperature
-TOP_P="0.9"             # Top-p sampling
-TOP_K="40"              # Top-k sampling
+TOP_P="0.9"             # Topp sampling
+TOP_K="40"              # Topk sampling
 ```
 
-## 🖥 Platform-Specific Setup
+## 🖥 PlatformSpecific Setup
 
 ### Windows
 
 **Using Command Prompt:**
 ```cmd
 set MODEL_PATH=C:\path\to\model.gguf
-set LLAMA_BIN=C:\path\to\llama-bin.exe
+set LLAMA_BIN=C:\path\to\llamabin.exe
 ```
 
 **Using PowerShell:**
 ```powershell
 $env:MODEL_PATH = "C:\path\to\model.gguf"
-$env:LLAMA_BIN = "C:\path\to\llama-bin.exe"
+$env:LLAMA_BIN = "C:\path\to\llamabin.exe"
 ```
 
 **Using .env file:**
 Create a `.env` file in your project root:
 ```env
 MODEL_PATH=./models/model.gguf
-LLAMA_BIN=./binaries/llama-bin.exe
+LLAMA_BIN=./binaries/llamabin.exe
 CTX_SIZE=8192
 ```
 
@@ -83,14 +83,14 @@ CTX_SIZE=8192
 **Using bash/zsh:**
 ```bash
 export MODEL_PATH="/path/to/model.gguf"
-export LLAMA_BIN="/path/to/llama-bin"
+export LLAMA_BIN="/path/to/llamabin"
 ```
 
 **Using .env file:**
 ```bash
 # Add to ~/.bashrc or ~/.zshrc
 export MODEL_PATH="/path/to/model.gguf"
-export LLAMA_BIN="/path/to/llama-bin"
+export LLAMA_BIN="/path/to/llamabin"
 ```
 
 ## 🎯 Configuration Profiles
@@ -98,7 +98,7 @@ export LLAMA_BIN="/path/to/llama-bin"
 ### Development Profile
 ```env
 # Optimized for development speed
-MODEL_PATH=./models/small-model.gguf
+MODEL_PATH=./models/smallmodel.gguf
 CTX_SIZE=2048
 BATCH_SIZE=128
 THREADS=4
@@ -108,17 +108,17 @@ GPU_LAYERS=0  # CPU only for consistency
 ### Production Profile  
 ```env
 # Optimized for performance
-MODEL_PATH=./models/large-model.gguf
+MODEL_PATH=./models/largemodel.gguf
 CTX_SIZE=8192
 BATCH_SIZE=512
 THREADS=12
 GPU_LAYERS=40  # Full GPU acceleration
 ```
 
-### Memory-Constrained Profile
+### MemoryConstrained Profile
 ```env
 # For systems with limited RAM
-MODEL_PATH=./models/quantized-model.gguf
+MODEL_PATH=./models/quantizedmodel.gguf
 CTX_SIZE=1024
 BATCH_SIZE=64
 THREADS=2
@@ -169,16 +169,16 @@ print("\n💡 Tip: Set these variables in your .env file or system environment")
 ❌ MODEL_PATH=./wrong/path/model.gguf
 
 # Correct path
-✅ MODEL_PATH=./models/llama-2-7b.gguf
+✅ MODEL_PATH=./models/llama27b.gguf
 ```
 
 ### Permission Denied
 ```bash
 # Make binary executable (Linux/macOS)
-chmod +x ./binaries/llama-bin
+chmod +x ./binaries/llamabin
 
 # Run as administrator (Windows)
-# Right-click Command Prompt → "Run as administrator"
+# Rightclick Command Prompt → "Run as administrator"
 ```
 
 ### Path Separators
@@ -246,6 +246,6 @@ BATCH_SIZE=512
 GPU_LAYERS=40
 ```
 
----
+
 
 **Next**: Configure your specific use case in [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md)

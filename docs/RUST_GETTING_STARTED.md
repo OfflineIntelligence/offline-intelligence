@@ -8,14 +8,14 @@ Complete guide for using the Offline Intelligence Library in Rust projects.
 
 ### Add to Existing Project
 ```bash
-cargo add offline-intelligence
+cargo add offlineintelligence
 ```
 
 ### Create New Project
 ```bash
-cargo new my-ai-project
-cd my-ai-project
-cargo add offline-intelligence
+cargo new myaiproject
+cd myaiproject
+cargo add offlineintelligence
 ```
 
 ## 🛠 Project Setup
@@ -23,7 +23,7 @@ cargo add offline-intelligence
 ### Cargo.toml Configuration
 ```toml
 [dependencies]
-offline-intelligence = "0.1.2"
+offlineintelligence = "0.1.2"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -31,7 +31,7 @@ serde_json = "1.0"
 
 ### Basic Project Structure
 ```
-my-ai-project/
+myaiproject/
 ├── src/
 │   ├── main.rs          # Main application
 │   ├── config.rs        # Configuration management
@@ -47,8 +47,8 @@ my-ai-project/
 ### .env File Setup
 ```env
 # Model configuration
-MODEL_PATH=./models/llama-2-7b.Q4_K_M.gguf
-LLAMA_BIN=./binaries/llama-bin
+MODEL_PATH=./models/llama27b.Q4_K_M.gguf
+LLAMA_BIN=./binaries/llamabin
 CTX_SIZE=8192
 BATCH_SIZE=256
 THREADS=6
@@ -87,7 +87,7 @@ use offline_intelligence::{OfflineIntelligence, Message};
 use tokio;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() > Result<(), Box<dyn std::error::Error>> {
     // Initialize the library
     let oi = OfflineIntelligence::new()?;
     
@@ -116,7 +116,7 @@ pub struct AIHandler {
 }
 
 impl AIHandler {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() > Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             oi: OfflineIntelligence::new()?,
             sessions: HashMap::new(),
@@ -127,7 +127,7 @@ impl AIHandler {
         &mut self, 
         session_id: &str, 
         user_message: &str
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) > Result<String, Box<dyn std::error::Error>> {
         // Add user message to session
         let messages = self.sessions.entry(session_id.to_string())
             .or_insert_with(Vec::new);
@@ -172,7 +172,7 @@ pub struct AsyncAIHandler {
 }
 
 impl AsyncAIHandler {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() > Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             oi: Arc::new(Mutex::new(OfflineIntelligence::new()?)),
         })
@@ -181,7 +181,7 @@ impl AsyncAIHandler {
     pub async fn generate_response(
         &self, 
         prompt: &str
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) > Result<String, Box<dyn std::error::Error>> {
         let oi = self.oi.lock().await;
         oi.generate_completion(prompt, Some(200)).await
     }
@@ -205,7 +205,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_env() -> Self {
+    pub fn from_env() > Self {
         Self {
             model_path: env::var("MODEL_PATH").expect("MODEL_PATH not set"),
             llama_bin: env::var("LLAMA_BIN").expect("LLAMA_BIN not set"),
@@ -272,7 +272,7 @@ use offline_intelligence::{OfflineIntelligence, Message};
 use std::io::{self, Write};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() > Result<(), Box<dyn std::error::Error>> {
     println!("🦀 Offline Intelligence Chat");
     println!("Type 'quit' to exit\n");
     
@@ -305,7 +305,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Run the example:
 ```bash
-cargo run --example chat_app
+cargo run example chat_app
 ```
 
 ## 🚀 Performance Optimization
@@ -315,10 +315,10 @@ cargo run --example chat_app
 // src/performance.rs
 use tokio::runtime::Builder;
 
-fn create_optimized_runtime() -> tokio::runtime::Runtime {
+fn create_optimized_runtime() > tokio::runtime::Runtime {
     Builder::new_multi_thread()
         .worker_threads(num_cpus::get())
-        .thread_name("ai-worker")
+        .thread_name("aiworker")
         .enable_all()
         .build()
         .unwrap()
@@ -331,7 +331,7 @@ fn create_optimized_runtime() -> tokio::runtime::Runtime {
 async fn batch_process_prompts(
     oi: &OfflineIntelligence,
     prompts: Vec<String>
-) -> Vec<Result<String, Box<dyn std::error::Error>>> {
+) > Vec<Result<String, Box<dyn std::error::Error>>> {
     let mut handles = Vec::new();
     
     for prompt in prompts {
@@ -364,9 +364,9 @@ echo "🚀 Setting up Offline Intelligence development environment"
 cargo check
 
 # Download test model (if not exists)
-if [ ! -f "./models/test-model.gguf" ]; then
+if [ ! f "./models/testmodel.gguf" ]; then
     echo "📥 Downloading test model..."
-    mkdir -p models
+    mkdir p models
     # Add model download command here
 fi
 
@@ -386,19 +386,19 @@ on: [push, pull_request]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runson: ubuntulatest
     steps:
-    - uses: actions/checkout@v3
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
+     uses: actions/checkout@v3
+     name: Install Rust
+      uses: actionsrs/toolchain@v1
       with:
         toolchain: stable
-    - name: Run tests
+     name: Run tests
       run: cargo test
-    - name: Check formatting
-      run: cargo fmt -- --check
-    - name: Run clippy
-      run: cargo clippy -- -D warnings
+     name: Check formatting
+      run: cargo fmt  check
+     name: Run clippy
+      run: cargo clippy  D warnings
 ```
 
 ## 🐛 Troubleshooting
@@ -408,8 +408,8 @@ jobs:
 **Missing Dependencies:**
 ```bash
 # Install system dependencies (Ubuntu/Debian)
-sudo apt-get update
-sudo apt-get install build-essential
+sudo aptget update
+sudo aptget install buildessential
 
 # Install system dependencies (macOS)
 brew install llvm
@@ -417,8 +417,8 @@ brew install llvm
 
 **Linking Errors:**
 ```toml
-# Cargo.toml - Add if needed
-[build-dependencies]
+# Cargo.toml  Add if needed
+[builddependencies]
 cc = "1.0"
 ```
 
@@ -452,9 +452,9 @@ println!("Generation took: {:?}", duration);
 
 1. **Explore Examples**: Check the `examples/` directory in the repository
 2. **Advanced Configuration**: Read [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md)
-3. **API Reference**: Visit the [documentation](https://docs.rs/offline-intelligence)
-4. **Community**: Join discussions on [GitHub Issues](https://github.com/OfflineIntelligence/offline-intelligence/issues)
+3. **API Reference**: Visit the [documentation](https://docs.rs/offlineintelligence)
+4. **Community**: Join discussions on [GitHub Issues](https://github.com/OfflineIntelligence/offlineintelligence/issues)
 
----
+
 
 **Ready to build?** Start with the example application and customize it for your needs!

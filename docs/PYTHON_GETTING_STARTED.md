@@ -8,28 +8,28 @@ Complete guide for using the Offline Intelligence Library in Python projects.
 
 ### Basic Installation
 ```bash
-pip install offline-intelligence
+pip install offlineintelligence
 ```
 
 ### Development Installation
 ```bash
 # Install with development dependencies
-pip install offline-intelligence[dev]
+pip install offlineintelligence[dev]
 
 # Install with numpy support
-pip install offline-intelligence[numpy]
+pip install offlineintelligence[numpy]
 ```
 
 ### Virtual Environment Setup
 ```bash
 # Create virtual environment
-python -m venv ai_project_env
+python m venv ai_project_env
 source ai_project_env/bin/activate  # Linux/macOS
 # or
 ai_project_env\Scripts\activate     # Windows
 
 # Install the library
-pip install offline-intelligence
+pip install offlineintelligence
 ```
 
 ## 🛠 Project Setup
@@ -37,14 +37,14 @@ pip install offline-intelligence
 ### Requirements File
 ```txt
 # requirements.txt
-offline-intelligence==0.1.2
-python-dotenv>=0.19.0
+offlineintelligence==0.1.2
+pythondotenv>=0.19.0
 numpy>=1.21.0
 ```
 
 ### Basic Project Structure
 ```
-ai-project/
+aiproject/
 ├── src/
 │   ├── __init__.py
 │   ├── main.py              # Main application
@@ -52,7 +52,7 @@ ai-project/
 │   ├── ai_handler.py        # AI interaction logic
 │   └── utils.py             # Helper functions
 ├── models/
-│   └── llama-2-7b.gguf      # AI model file
+│   └── llama27b.gguf      # AI model file
 ├── config/
 │   └── .env                 # Environment variables
 ├── tests/
@@ -66,8 +66,8 @@ ai-project/
 ### .env File Setup
 ```env
 # Model configuration
-MODEL_PATH=./models/llama-2-7b.Q4_K_M.gguf
-LLAMA_BIN=./binaries/llama-bin
+MODEL_PATH=./models/llama27b.Q4_K_M.gguf
+LLAMA_BIN=./binaries/llamabin
 CTX_SIZE=8192
 BATCH_SIZE=256
 THREADS=6
@@ -105,7 +105,7 @@ class Config:
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.8"))
     
     @classmethod
-    def validate(cls) -> bool:
+    def validate(cls) > bool:
         """Validate required configuration"""
         required = [cls.MODEL_PATH, cls.LLAMA_BIN]
         if not all(required):
@@ -150,7 +150,7 @@ class ChatHandler:
         self.oi = OfflineIntelligence()
         self.sessions: Dict[str, List[Message]] = {}
     
-    async def chat(self, session_id: str, user_message: str) -> str:
+    async def chat(self, session_id: str, user_message: str) > str:
         # Get or create session
         if session_id not in self.sessions:
             self.sessions[session_id] = []
@@ -223,7 +223,7 @@ class AsyncAIHandler:
             # Cleanup if needed
             pass
     
-    async def process_batch(self, prompts: list[str]) -> list[str]:
+    async def process_batch(self, prompts: list[str]) > list[str]:
         """Process multiple prompts concurrently"""
         async with self.get_ai_instance() as ai:
             tasks = [
@@ -248,7 +248,7 @@ async def batch_processing():
         print(f"Response: {result}\n")
 ```
 
-### Configuration-Based Initialization
+### ConfigurationBased Initialization
 ```python
 # src/factory.py
 from offline_intelligence_py import OfflineIntelligence
@@ -257,7 +257,7 @@ import os
 
 class AIFactory:
     @staticmethod
-    def create_ai_instance(**kwargs) -> OfflineIntelligence:
+    def create_ai_instance(**kwargs) > OfflineIntelligence:
         """Create AI instance with configuration"""
         # Override config with kwargs if provided
         config_dict = {
@@ -408,19 +408,19 @@ class PerformanceOptimizer:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.ai = OfflineIntelligence()
     
-    async def process_with_limit(self, prompt: str) -> str:
+    async def process_with_limit(self, prompt: str) > str:
         """Process with concurrency limiting"""
         async with self.semaphore:
             return await self.ai.generate_completion(prompt, max_tokens=100)
     
-    async def batch_process(self, prompts: List[str]) -> List[str]:
+    async def batch_process(self, prompts: List[str]) > List[str]:
         """Efficiently process multiple prompts"""
         start_time = time.time()
         
         tasks = [self.process_with_limit(prompt) for prompt in prompts]
         results = await asyncio.gather(*tasks)
         
-        elapsed = time.time() - start_time
+        elapsed = time.time()  start_time
         print(f"Processed {len(prompts)} prompts in {elapsed:.2f}s")
         
         return results
@@ -448,7 +448,7 @@ class MemoryManagedAI:
         self.request_count = 0
         self.cleanup_threshold = 100
     
-    async def generate_with_cleanup(self, prompt: str, **kwargs) -> str:
+    async def generate_with_cleanup(self, prompt: str, **kwargs) > str:
         """Generate response with periodic cleanup"""
         self.request_count += 1
         
@@ -469,23 +469,23 @@ class MemoryManagedAI:
 echo "🐍 Setting up Python development environment"
 
 # Create virtual environment
-python -m venv venv
+python m venv venv
 source venv/bin/activate
 
 # Install dependencies
-pip install -r requirements.txt
-pip install pytest pytest-asyncio black flake8
+pip install r requirements.txt
+pip install pytest pytestasyncio black flake8
 
 # Download test model if needed
-if [ ! -f "./models/test-model.gguf" ]; then
+if [ ! f "./models/testmodel.gguf" ]; then
     echo "📥 Downloading test model..."
-    mkdir -p models
+    mkdir p models
     # Add model download command
 fi
 
 # Run tests
 echo "🧪 Running tests..."
-python -m pytest tests/ -v
+python m pytest tests/ v
 
 echo "✅ Python development environment ready!"
 ```
@@ -547,8 +547,8 @@ python examples/chat_cli.py
 **Module Not Found:**
 ```bash
 # Reinstall with proper dependencies
-pip uninstall offline-intelligence
-pip install offline-intelligence --no-cache-dir
+pip uninstall offlineintelligence
+pip install offlineintelligence nocachedir
 ```
 
 **Import Errors on Windows:**
@@ -591,8 +591,8 @@ def monitor_performance():
             end_time = time.time()
             end_memory = process.memory_info().rss / 1024 / 1024  # MB
             
-            print(f"⏱️  Time: {end_time - start_time:.2f}s")
-            print(f"💾 Memory: {end_memory - start_memory:.1f}MB")
+            print(f"⏱️  Time: {end_time  start_time:.2f}s")
+            print(f"💾 Memory: {end_memory  start_memory:.1f}MB")
             
             return result
         return wrapped
@@ -603,9 +603,9 @@ def monitor_performance():
 
 1. **Explore Examples**: Check the `examples/` directory
 2. **Advanced Configuration**: Read [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md)  
-3. **API Reference**: Visit the [documentation](https://pypi.org/project/offline-intelligence)
-4. **Community**: Join discussions on [GitHub Issues](https://github.com/OfflineIntelligence/offline-intelligence/issues)
+3. **API Reference**: Visit the [documentation](https://pypi.org/project/offlineintelligence)
+4. **Community**: Join discussions on [GitHub Issues](https://github.com/OfflineIntelligence/offlineintelligence/issues)
 
----
+
 
 **Ready to build?** Start with the example application and customize it for your needs!

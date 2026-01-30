@@ -7,20 +7,20 @@ This guide covers how to download, prepare, and configure AI models for use with
 ## 📚 Understanding Model Types
 
 ### Model Formats Supported
-- **GGUF** (Recommended) - Modern, efficient format
-- **GGML** - Legacy format, still widely used
-- **ONNX** - Cross-platform neural network format
-- **TensorRT** - NVIDIA GPU optimized
-- **Safetensors** - Safe tensor format
+ **GGUF** (Recommended)  Modern, efficient format
+ **GGML**  Legacy format, still widely used
+ **ONNX**  Crossplatform neural network format
+ **TensorRT**  NVIDIA GPU optimized
+ **Safetensors**  Safe tensor format
 
 ### Quantization Levels
-Different quantization levels offer trade-offs between:
-- **Size**: Storage requirements
-- **Speed**: Inference performance  
-- **Quality**: Output quality
+Different quantization levels offer tradeoffs between:
+ **Size**: Storage requirements
+ **Speed**: Inference performance  
+ **Quality**: Output quality
 
 | Quantization | Size | Speed | Quality | Use Case |
-|-------------|------|-------|---------|----------|
+||||||
 | Q2_K | Smallest | Fastest | Lowest | Testing only |
 | Q4_0 | Small | Fast | Good | Mobile/constrained |
 | Q4_K_M | Balanced | Balanced | Very Good | Recommended |
@@ -31,7 +31,7 @@ Different quantization levels offer trade-offs between:
 
 ### Method 1: Hugging Face (Recommended)
 
-**Install huggingface-cli:**
+**Install huggingfacecli:**
 ```bash
 pip install huggingface_hub
 ```
@@ -39,21 +39,21 @@ pip install huggingface_hub
 **Download models:**
 ```bash
 # Llama 2 7B (recommended for beginners)
-huggingface-cli download TheBloke/Llama-2-7B-GGUF llama-2-7b.Q4_K_M.gguf
+huggingfacecli download TheBloke/Llama27BGGUF llama27b.Q4_K_M.gguf
 
 # Llama 2 13B (better quality)
-huggingface-cli download TheBloke/Llama-2-13B-GGUF llama-2-13b.Q4_K_M.gguf
+huggingfacecli download TheBloke/Llama213BGGUF llama213b.Q4_K_M.gguf
 
 # Mistral 7B (alternative)
-huggingface-cli download TheBloke/Mistral-7B-v0.1-GGUF mistral-7b-v0.1.Q4_K_M.gguf
+huggingfacecli download TheBloke/Mistral7Bv0.1GGUF mistral7bv0.1.Q4_K_M.gguf
 ```
 
 ### Method 2: Direct Download
 
 Visit model repositories:
-- **Llama 2**: https://huggingface.co/TheBloke/Llama-2-7B-GGUF
-- **Mistral**: https://huggingface.co/TheBloke/Mistral-7B-v0.1-GGUF
-- **WizardLM**: https://huggingface.co/TheBloke/WizardLM-7B-V1.0-Uncensored-GGUF
+ **Llama 2**: https://huggingface.co/TheBloke/Llama27BGGUF
+ **Mistral**: https://huggingface.co/TheBloke/Mistral7Bv0.1GGUF
+ **WizardLM**: https://huggingface.co/TheBloke/WizardLM7BV1.0UncensoredGGUF
 
 Download the `.gguf` file directly.
 
@@ -68,9 +68,9 @@ cd llama.cpp
 make
 
 # Convert model
-python convert.py your-model.bin \
-  --outfile models/converted-model.gguf \
-  --outtype q4_K_M
+python convert.py yourmodel.bin \
+  outfile models/convertedmodel.gguf \
+  outtype q4_K_M
 ```
 
 ## 📁 Organizing Your Models
@@ -79,14 +79,14 @@ python convert.py your-model.bin \
 ```
 project/
 ├── models/
-│   ├── llama-2-7b/
+│   ├── llama27b/
 │   │   ├── Q4_K_M.gguf     # Main model
 │   │   ├── Q5_K_M.gguf     # Higher quality version
 │   │   └── small.gguf      # Quantized for testing
-│   ├── mistral-7b/
+│   ├── mistral7b/
 │   │   └── Q4_K_M.gguf
 │   └── config/
-│       └── model-config.json
+│       └── modelconfig.json
 ```
 
 ### Model Selection Guide
@@ -94,21 +94,21 @@ project/
 **For Development/Testing:**
 ```bash
 # Small, fast model for quick iteration
-models/llama-2-7b/Q4_K_M.gguf  # ~4GB
+models/llama27b/Q4_K_M.gguf  # ~4GB
 CTX_SIZE=2048
 ```
 
 **For Production:**
 ```bash
 # Larger, higher quality model
-models/llama-2-13b/Q5_K_M.gguf  # ~8GB  
+models/llama213b/Q5_K_M.gguf  # ~8GB  
 CTX_SIZE=8192
 ```
 
-**For Resource-Constrained Environments:**
+**For ResourceConstrained Environments:**
 ```bash
 # Smallest viable model
-models/llama-2-7b/small.gguf    # ~2GB
+models/llama27b/small.gguf    # ~2GB
 CTX_SIZE=1024
 ```
 
@@ -116,18 +116,18 @@ CTX_SIZE=1024
 
 ### Basic Configuration File
 
-Create `model-config.json`:
+Create `modelconfig.json`:
 ```json
 {
-  "default_model": "llama-2-7b/Q4_K_M.gguf",
+  "default_model": "llama27b/Q4_K_M.gguf",
   "models": {
     "development": {
-      "path": "llama-2-7b/small.gguf",
+      "path": "llama27b/small.gguf",
       "ctx_size": 2048,
       "batch_size": 128
     },
     "production": {
-      "path": "llama-2-13b/Q5_K_M.gguf", 
+      "path": "llama213b/Q5_K_M.gguf", 
       "ctx_size": 8192,
       "batch_size": 512
     }
@@ -142,7 +142,7 @@ import json
 import os
 
 # Load configuration
-with open('models/config/model-config.json') as f:
+with open('models/config/modelconfig.json') as f:
     config = json.load(f)
 
 # Set environment based on mode
@@ -190,7 +190,7 @@ def test_model(model_path):
 models_dir = Path("./models")
 for model_file in models_dir.rglob("*.gguf"):
     test_model(str(model_file))
-    print("-" * 50)
+    print("" * 50)
 ```
 
 ## 🚀 Performance Optimization
@@ -252,7 +252,7 @@ def benchmark_model(model_path, iterations=5):
         result = oi.generate_completion(prompt, max_tokens=100)
         end_time = time.time()
         
-        duration = end_time - start_time
+        duration = end_time  start_time
         times.append(duration)
         print(f"Iteration {i+1}: {duration:.2f}s")
     
@@ -321,7 +321,7 @@ echo "models/versions.txt" >> .gitkeep
 ```bash
 # Create backup script
 #!/bin/bash
-rsync -av models/ /backup/models/
+rsync av models/ /backup/models/
 ```
 
 ### Model Documentation
@@ -332,18 +332,18 @@ Create `models/README.md`:
 ## Current Models
 
 ### Llama 2 7B Q4_K_M
-- Size: 4.1GB
-- Purpose: General development
-- Performance: Fast, good quality
-- Last updated: 2024-01-30
+ Size: 4.1GB
+ Purpose: General development
+ Performance: Fast, good quality
+ Last updated: 20240130
 
 ### Llama 2 13B Q5_K_M  
-- Size: 8.2GB
-- Purpose: Production use
-- Performance: Excellent quality
-- Last updated: 2024-01-30
+ Size: 8.2GB
+ Purpose: Production use
+ Performance: Excellent quality
+ Last updated: 20240130
 ```
 
----
+
 
 **Next**: Learn about advanced configuration in [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md)
