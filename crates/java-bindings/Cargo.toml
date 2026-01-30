@@ -4,7 +4,7 @@ version = "0.1.2"
 edition = "2021"
 description = "Java bindings for Offline Intelligence Library"
 license = "Apache-2.0"
-repository = ""
+repository = "https://github.com/offline-intelligence/library"
 
 [lib]
 name = "offline_intelligence_java"
