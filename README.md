@@ -31,27 +31,35 @@ Offline Intelligence Library provides developers with powerful tools for running
 cargo add offline-intelligence
 ```
 
-### Java
-
-```bash
-cargo add offline_intelligence_java
-```
-
 ### JavaScript/Node.js
 
 ```bash
-cargo add offline_intelligence_js
+npm install offline-intelligence-sdk
+```
+
+### Java (via JitPack)
+
+**Maven:**
+```xml
+<dependency>
+    <groupId>com.github.OfflineIntelligence</groupId>
+    <artifactId>offline-intelligence</artifactId>
+    <version>v0.1.2</version>
+</dependency>
+```
+
+**Gradle:**
+```gradle
+implementation 'com.github.OfflineIntelligence:offline-intelligence:v0.1.2'
 ```
 
 ### C++
 
-```bash
-cargo add offline_intelligence_cpp
-```
+Include the header files from `crates/cpp-bindings/include/` and link against the compiled library.
 
 ### Python
 
-Python bindings are pending publication due to build system limitations.
+Python package pending publication due to build system limitations.
 
 ## Quick Start
 

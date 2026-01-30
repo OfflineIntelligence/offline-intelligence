@@ -39,6 +39,8 @@ All packages use the same version number defined in:
 - `offline_intelligence_java` v0.1.2 (Java bindings) - crates.io
 - `offline_intelligence_js` v0.1.2 (JavaScript bindings) - crates.io
 - `offline_intelligence_cpp` v0.1.2 (C++ bindings) - crates.io
+- `offline-intelligence-sdk` v0.1.2 (JavaScript package) - npm
+- Java package available via JitPack (com.github.OfflineIntelligence:offline-intelligence:v0.1.2)
 
 ❌ **Pending Publication:**
 - Python bindings - Blocked (Python not installed on build system)
