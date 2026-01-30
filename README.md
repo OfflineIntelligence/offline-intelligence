@@ -55,11 +55,28 @@ implementation 'com.github.OfflineIntelligence:offline-intelligence:v0.1.2'
 
 ### C++
 
-Include the header files from `crates/cpp-bindings/include/` and link against the compiled library.
+Download the pre-built package from [GitHub Releases](https://github.com/OfflineIntelligence/offline-intelligence/releases):
+
+1. Extract the zip file
+2. Add `include/` directory to your compiler's include path
+3. Link against `offline_intelligence_cpp.dll`
+
+Or use CMake:
+```cmake
+find_package(offline-intelligence-cpp REQUIRED)
+target_link_libraries(your_target offline-intelligence-cpp)
+```
 
 ### Python
 
-Python package pending publication due to build system limitations.
+Python package is prepared and ready for publishing. Due to system limitations, it needs to be published from a system with Python properly installed.
+
+**Preparation completed:**
+- Build scripts included
+- Publishing instructions provided
+- All necessary files ready
+
+See [Python Publishing Instructions](crates/python-bindings/PUBLISH_PYPI_INSTRUCTIONS.md) for detailed steps.
 
 ## Quick Start
 
