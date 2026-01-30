@@ -6,7 +6,7 @@ license = "Apache-2.0"
 repository = "https://github.com/offline-intelligence/library"
 readme = "README.md"
 edition = "2021"
-keywords = ["ai", "llm", "offline", "context-management", "memory-search", "machine-learning"]
+keywords = ["ai", "llm", "offline", "context-management", "memory-search"]
 categories = ["science", "algorithms", "asynchronous"]
 exclude = ["target/*", "tests/*"]
 
