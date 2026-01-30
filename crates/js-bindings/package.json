@@ -1,5 +1,5 @@
 {
-  "name": "@offline-intelligence/sdk",
+  "name": "offline-intelligence-sdk",
   "version": "0.1.2",
   "description": "High-performance library for offline AI inference with context management and memory optimization",
   "main": "index.js",
@@ -57,8 +57,5 @@
         "x86_64-pc-windows-msvc"
       ]
     }
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }
