@@ -1899,7 +1899,7 @@ dependencies = [
 
 [[package]]
 name = "offline-intelligence"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1956,7 +1956,7 @@ dependencies = [
 
 [[package]]
 name = "offline_intelligence_cpp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "offline-intelligence",
@@ -1966,7 +1966,7 @@ dependencies = [
 
 [[package]]
 name = "offline_intelligence_java"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "jni",
  "offline-intelligence",
@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "offline_intelligence_js"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "napi",
  "napi-build",
@@ -1988,7 +1988,7 @@ dependencies = [
 
 [[package]]
 name = "offline_intelligence_py"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "offline-intelligence",
  "pyo3",

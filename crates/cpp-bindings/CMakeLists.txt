@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(offline_intelligence_cpp VERSION 0.1.1 LANGUAGES CXX)
+project(offline_intelligence_cpp VERSION 0.1.2 LANGUAGES CXX)
 
 # Project information
 set(PROJECT_DESCRIPTION "High-performance library for offline AI inference with context management and memory optimization")
