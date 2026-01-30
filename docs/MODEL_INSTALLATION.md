@@ -27,9 +27,9 @@ Different quantization levels offer tradeoffs between:
 | Q5_K_M | Large | Slower | Excellent | High quality |
 | Q6_K | Largest | Slowest | Best | Maximum quality |
 
-## 📥 Downloading Models
+## Downloading Models
 
-### Method 1: Hugging Face (Recommended)
+### Method 1: Hugging Face (Recommended Examples)
 
 **Install huggingfacecli:**
 ```bash
@@ -73,9 +73,9 @@ python convert.py yourmodel.bin \
   outtype q4_K_M
 ```
 
-## 📁 Organizing Your Models
+## Organizing Your Models
 
-### Recommended Directory Structure
+### Directory Structure Examples
 ```
 project/
 ├── models/
@@ -105,16 +105,16 @@ models/llama213b/Q5_K_M.gguf  # ~8GB
 CTX_SIZE=8192
 ```
 
-**For ResourceConstrained Environments:**
+**For Resource-Constrained Environments:**
 ```bash
 # Smallest viable model
 models/llama27b/small.gguf    # ~2GB
 CTX_SIZE=1024
 ```
 
-## ⚙️ Model Configuration
+## Model Configuration
 
-### Basic Configuration File
+### Configuration File Examples
 
 Create `modelconfig.json`:
 ```json
@@ -154,9 +154,9 @@ os.environ['CTX_SIZE'] = str(model_config['ctx_size'])
 os.environ['BATCH_SIZE'] = str(model_config['batch_size'])
 ```
 
-## 🔍 Model Validation
+## Model Validation
 
-### Test Script
+### Validation Script
 
 Create `test_models.py`:
 ```python
@@ -193,9 +193,9 @@ for model_file in models_dir.rglob("*.gguf"):
     print("" * 50)
 ```
 
-## 🚀 Performance Optimization
+## Performance Optimization
 
-### Model Loading Strategies
+### Loading Strategies
 
 **Lazy Loading:**
 ```python
