@@ -1955,11 +1955,66 @@ dependencies = [
 ]
 
 [[package]]
+name = "offline-intelligence"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49fa88bab6c7e8bde556b44f199ae503d947b9ff1b0a65b886754a9320209d74"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-stream",
+ "async-trait",
+ "axum",
+ "bincode",
+ "blake3",
+ "bytes",
+ "chrono",
+ "clap",
+ "crossbeam-queue",
+ "dashmap",
+ "dotenvy",
+ "flate2",
+ "futures",
+ "futures-util",
+ "gguf",
+ "hora",
+ "include_dir",
+ "lazy_static",
+ "moka",
+ "num_cpus",
+ "nvml-wrapper",
+ "pin-project-lite",
+ "prometheus",
+ "r2d2",
+ "r2d2_sqlite",
+ "rand 0.8.5",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tar",
+ "tokio",
+ "tokio-stream",
+ "tower 0.4.13",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "validator",
+ "which",
+ "zerofrom",
+ "zip",
+]
+
+[[package]]
 name = "offline_intelligence_cpp"
 version = "0.1.2"
 dependencies = [
  "libc",
- "offline-intelligence",
+ "offline-intelligence 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json",
  "tokio",
 ]
@@ -1969,7 +2024,7 @@ name = "offline_intelligence_java"
 version = "0.1.2"
 dependencies = [
  "jni",
- "offline-intelligence",
+ "offline-intelligence 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json",
  "tokio",
 ]
@@ -1981,7 +2036,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "offline-intelligence",
+ "offline-intelligence 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json",
  "tokio",
 ]
@@ -1990,7 +2045,7 @@ dependencies = [
 name = "offline_intelligence_py"
 version = "0.1.2"
 dependencies = [
- "offline-intelligence",
+ "offline-intelligence 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "pyo3",
  "serde_json",
  "tokio",

@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.20", features = ["extension-module"] }
-offline-intelligence = { path = "../offline-intelligence" }
+offline-intelligence = "0.1.2"
 serde_json = "1.0"
 tokio = { version = "1", features = ["rt", "macros"] }
 
