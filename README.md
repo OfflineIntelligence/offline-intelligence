@@ -132,15 +132,20 @@ All language-specific documentation has been moved to the [docs/](docs/) directo
 - Individual language binding guides
 - Detailed usage examples
 
-### Core Library
-- [Core Library Documentation](docs/OFFLINE_INTELLIGENCE.md)
+### Getting Started (Start Here)
+- [Universal Getting Started Guide](docs/GETTING_STARTED.md) - Complete setup for all platforms
+- [Environment Setup](docs/ENVIRONMENT_SETUP.md) - Configuration and variables
+- [Model Installation](docs/MODEL_INSTALLATION.md) - AI model download and setup
 
-### Language Bindings
-- [Python Bindings](docs/PYTHON_BINDINGS.md)
-- [Java Bindings](docs/JAVA_BINDINGS.md)
-- [JavaScript Bindings](docs/JS_BINDINGS.md)
+### Platform-Specific Guides
+- [Rust Development](docs/RUST_GETTING_STARTED.md) - Best performance, full control
+- [Python Development](docs/PYTHON_GETTING_STARTED.md) - Easy to use, great for prototyping
+- [JavaScript Development](docs/JAVASCRIPT_GETTING_STARTED.md) - Web and Node.js applications
+- [Java Development](docs/JAVA_GETTING_STARTED.md) - Enterprise applications
+- [C++ Development](docs/CPP_GETTING_STARTED.md) - System-level integration
 
 ### Additional Resources
+- [Core Library Documentation](docs/OFFLINE_INTELLIGENCE.md)
 - [Complete Documentation](COMPLETE_DOCUMENTATION.md)
 - [Publishing Guide](PUBLISHING.md)
 
