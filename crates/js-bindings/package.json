@@ -1,0 +1,64 @@
+{
+  "name": "@offline-intelligence/sdk",
+  "version": "0.1.1",
+  "description": "High-performance library for offline AI inference with context management and memory optimization",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "offline_intelligence_js.node"
+  ],
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "prepublishOnly": "npm run build",
+    "test": "node test.js",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "llm",
+    "offline",
+    "intelligence",
+    "context-management",
+    "memory-search",
+    "machine-learning",
+    "nlp",
+    "rust"
+  ],
+  "author": {
+    "name": "Offline Intelligence Team",
+    "email": "intelligencedevelopment.io@gmail.com"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/offline-intelligence/library.git"
+  },
+  "bugs": {
+    "url": "https://github.com/offline-intelligence/library/issues"
+  },
+  "homepage": "https://github.com/offline-intelligence/library#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.16.0"
+  },
+  "napi": {
+    "name": "offline_intelligence_js",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

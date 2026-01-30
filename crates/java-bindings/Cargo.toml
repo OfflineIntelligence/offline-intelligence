@@ -1,0 +1,17 @@
+[package]
+name = "offline_intelligence_java"
+version = "0.1.1"
+edition = "2021"
+description = "Java bindings for Offline Intelligence Library"
+license = "Apache-2.0"
+repository = ""
+
+[lib]
+name = "offline_intelligence_java"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21"
+offline-intelligence = { path = "../offline-intelligence" }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt", "macros"] }

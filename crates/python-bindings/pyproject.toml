@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "pyo3-setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "offline-intelligence"
+version = "0.1.1"
+description = "High-performance library for offline AI inference with context management and memory optimization"
+readme = "README.md"
+authors = [{name = "Offline Intelligence Team", email = "intelligencedevelopment.io@gmail.com"}]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "pyo3>=0.20.0",
+    "setuptools>=45.0.0",
+    "wheel>=0.37.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/offline-intelligence/library"
+"Bug Tracker" = "https://github.com/offline-intelligence/library/issues"
+Documentation = "https://github.com/offline-intelligence/library/wiki"
+Repository = "https://github.com/offline-intelligence/library"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-asyncio>=0.15.0",
+    "black>=21.0",
+    "flake8>=3.8.0",
+]
+numpy = [
+    "numpy>=1.21.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["offline_intelligence_py*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.so", "*.dll", "*.dylib"]

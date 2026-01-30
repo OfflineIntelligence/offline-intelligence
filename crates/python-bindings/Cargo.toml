@@ -1,0 +1,20 @@
+[package]
+name = "offline_intelligence_py"
+version = "0.1.1"
+edition = "2021"
+description = "Python bindings for Offline Intelligence Library"
+license = "Apache-2.0"
+repository = ""
+
+[lib]
+name = "offline_intelligence_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+offline-intelligence = { path = "../offline-intelligence" }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[features]
+extension-module = ["pyo3/extension-module"]

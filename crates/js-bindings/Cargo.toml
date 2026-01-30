@@ -1,0 +1,21 @@
+[package]
+name = "offline_intelligence_js"
+version = "0.1.1"
+edition = "2021"
+description = "JavaScript bindings for Offline Intelligence Library"
+license = "Apache-2.0"
+repository = ""
+
+[lib]
+name = "offline_intelligence_js"
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2", features = ["async"] }
+napi-derive = "2"
+offline-intelligence = { path = "../offline-intelligence" }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[build-dependencies]
+napi-build = "1"

@@ -1,0 +1,19 @@
+Resources/models/gguf-model.gguf 
+Resources/bin/Linux
+Resources/bin/MacOS
+Resources/bin/Windows
+
+# Rust build artifacts
+target/
+
+# Local SQLite databases (do not commit runtime data)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+crates/offline-intelligence/data/*.db
+crates/offline-intelligence/data/*.db-shm
+crates/offline-intelligence/data/*.db-wal
+
+
+# OS files
+.DS_Store

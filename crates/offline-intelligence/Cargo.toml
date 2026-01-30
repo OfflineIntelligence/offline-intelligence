@@ -1,0 +1,119 @@
+[package]
+name = "offline-intelligence"
+version = "0.1.1"
+description = "High-performance library for offline AI inference with context management and memory optimization"
+license = "Apache-2.0"
+repository = "https://github.com/offline-intelligence/library"
+readme = "README.md"
+edition = "2021"
+keywords = ["ai", "llm", "offline", "context-management", "memory-search", "machine-learning"]
+categories = ["science", "algorithms", "asynchronous"]
+exclude = ["target/*", "tests/*"]
+
+[lib]
+name = "offline_intelligence"
+path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[[bin]]
+name = "offline-intelligence"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+# Core async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# Error handling
+anyhow = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "time"] }
+
+# Data structures and utilities
+dashmap = "5.5"
+lazy_static = "1.4"
+bytes = "1.5"
+regex = "1.10"
+rand = "0.8"
+which = "1.0"
+crossbeam-queue = "0.3"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled", "functions", "modern_sqlite"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+
+# Caching
+moka = { version = "0.12", features = ["future", "sync"] }
+
+# Concurrency and parallelism
+rayon = "1.8"
+async-trait = "0.1"
+arc-swap = "1.7"
+futures = "0.3"
+futures-util = "0.3"
+async-stream = "0.3"
+tokio-stream = "0.1"
+pin-project-lite = "0.2"
+
+# System information
+sysinfo = "0.30"
+num_cpus = "1.16"
+
+# Model formats and utilities
+gguf = "0.1"
+zerofrom = "0.1"
+include_dir = "0.7"
+flate2 = "1.0"
+tar = "0.4"
+zip = "1.1"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Optional dependencies for CLI
+axum = { version = "0.7", optional = true }
+tower = { version = "0.4", features = ["limit", "buffer", "util"], optional = true }
+tower-http = { version = "0.5", features = ["trace", "cors", "timeout", "limit"], optional = true }
+prometheus = { version = "0.13", optional = true }
+nvml-wrapper = { version = "0.10", optional = true }
+clap = { version = "4.4", features = ["derive"], optional = true }
+hora = { version = "0.1", optional = true }
+validator = { version = "0.16", features = ["derive"], optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
+uuid = { version = "1.7", features = ["v4", "serde"], optional = true }
+blake3 = { version = "1.5", optional = true }
+dotenvy = { version = "0.15", optional = true }
+
+[features]
+default = ["cli"]
+cli = [
+    "axum",
+    "tower",
+    "tower-http",
+    "prometheus",
+    "nvml-wrapper",
+    "clap",
+    "hora",
+    "validator",
+    "chrono",
+    "uuid",
+    "blake3",
+    "dotenvy"
+]
+
+optional = ["cli"]
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.8"
+mockito = "1.2"
+proptest = "1.4"

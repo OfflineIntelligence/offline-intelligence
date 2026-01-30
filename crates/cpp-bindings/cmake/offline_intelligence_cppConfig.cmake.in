@@ -1,0 +1,5 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/offline_intelligence_cppTargets.cmake")
+
+check_required_components(offline_intelligence_cpp)

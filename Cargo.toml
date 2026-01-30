@@ -1,0 +1,14 @@
+# Aud.io/Cargo.toml [workspace root]
+
+[workspace]
+members = [
+    "crates/offline-intelligence",
+    "crates/python-bindings",
+    "crates/java-bindings",
+    "crates/js-bindings",
+    "crates/cpp-bindings",
+]
+resolver = "1"
+
+[workspace.dependencies]
+offline-intelligence = { path = "crates/offline-intelligence" }

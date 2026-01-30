@@ -1,0 +1,30 @@
+# Build artifacts
+target/
+build/
+
+# Source files not needed in package
+src/
+Cargo.toml
+Cargo.lock
+
+# Test files
+test.js
+*.test.js
+
+# Development files
+.nyc_output/
+coverage/
+.eslintrc.js
+.prettierrc.js
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Rust files
+.rustup/
+.cargo/
