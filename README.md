@@ -69,14 +69,9 @@ target_link_libraries(your_target offline-intelligence-cpp)
 
 ### Python
 
-Python package is prepared and ready for publishing. Due to system limitations, it needs to be published from a system with Python properly installed.
-
-**Preparation completed:**
-- Build scripts included
-- Publishing instructions provided
-- All necessary files ready
-
-See [Python Publishing Instructions](crates/python-bindings/PUBLISH_PYPI_INSTRUCTIONS.md) for detailed steps.
+```bash
+pip install offline-intelligence
+```
 
 ## Quick Start
 
@@ -115,56 +110,7 @@ cd crates/cpp-bindings && cargo build --release
 
 ## Language-Specific Usage
 
-### Python
-
-```python
-from offline_intelligence_py import OfflineIntelligence, Message
-
-oi = OfflineIntelligence()
-messages = [Message("user", "Hello!"), Message("assistant", "Hi there!")]
-result = oi.optimize_context("session123", messages, "Hello")
-```
-
-### Java
-
-```java
-import com.offlineintelligence.*;
-
-OfflineIntelligence oi = new OfflineIntelligence();
-Message[] messages = {
-    new Message("user", "Hello!"),
-    new Message("assistant", "Hi there!")
-};
-OptimizationResult result = oi.optimizeContext("session123", messages, "Hello");
-```
-
-### JavaScript/Node.js
-
-```javascript
-const { OfflineIntelligence, Message } = require('offline-intelligence');
-
-const oi = new OfflineIntelligence();
-const messages = [
-    new Message('user', 'Hello!'),
-    new Message('assistant', 'Hi there!')
-];
-const result = await oi.optimizeContext('session123', messages, 'Hello');
-```
-
-### C++
-
-```cpp
-#include "offline_intelligence_cpp.h"
-
-using namespace offline_intelligence;
-
-OfflineIntelligence oi;
-std::vector<Message> messages = {
-    Message("user", "Hello!"),
-    Message("assistant", "Hi there!")
-};
-auto result = oi.optimize_context("session123", messages, "Hello");
-```
+See individual documentation files in the [docs](docs/) directory for detailed usage examples in each language.
 
 ## Configuration
 
@@ -179,13 +125,24 @@ export THREADS="6"
 export GPU_LAYERS="20"
 ```
 
-## Documentation
+## Documentation Structure
 
-- [Core Library Documentation](crates/offline-intelligence/README.md)
-- [Python Bindings](crates/python-bindings/README.md)
-- [Java Bindings](crates/java-bindings/README.md)
-- [JavaScript Bindings](crates/js-bindings/README.md)
-- [C++ Bindings](crates/cpp-bindings/README.md)
+All language-specific documentation has been moved to the [docs/](docs/) directory:
+- Core library documentation
+- Individual language binding guides
+- Detailed usage examples
+
+### Core Library
+- [Core Library Documentation](docs/OFFLINE_INTELLIGENCE.md)
+
+### Language Bindings
+- [Python Bindings](docs/PYTHON_BINDINGS.md)
+- [Java Bindings](docs/JAVA_BINDINGS.md)
+- [JavaScript Bindings](docs/JS_BINDINGS.md)
+
+### Additional Resources
+- [Complete Documentation](COMPLETE_DOCUMENTATION.md)
+- [Publishing Guide](PUBLISHING.md)
 
 ## Development
 
