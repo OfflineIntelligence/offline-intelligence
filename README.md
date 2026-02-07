@@ -608,6 +608,168 @@ Set API configuration with API_HOST and API_PORT
 Use auto-detection for performance tuning (THREADS, GPU_LAYERS, CTX_SIZE, BATCH_SIZE)
 Configure resource management and monitoring settings
 
+## Platform-Specific and Use Case Configuration Guide
+
+The Offline Intelligence Library is designed to work across different platforms and hardware configurations. Below are optimized .env configurations for various use cases:
+
+### Platform-Specific Configurations
+
+#### Windows Configuration
+```env
+# Windows-specific paths
+LLAMA_BIN=C:\llama\llama-server.exe
+MODEL_PATH=C:\models\your-model.gguf
+API_HOST=127.0.0.1
+API_PORT=8000
+# Windows may need lower concurrency
+MAX_CONCURRENT_STREAMS=2
+REQUESTS_PER_SECOND=12
+```
+
+#### macOS Configuration
+```env
+# macOS-specific paths
+LLAMA_BIN=/usr/local/bin/llama-server
+MODEL_PATH=/Users/$USER/.offline-intelligence/models/your-model.gguf
+API_HOST=127.0.0.1
+API_PORT=8000
+# macOS Metal support
+GPU_LAYERS=10  # Adjust based on your Mac's GPU
+```
+
+#### Linux Configuration
+```env
+# Linux-specific paths
+LLAMA_BIN=/usr/local/bin/llama-server
+MODEL_PATH=/home/$USER/.offline-intelligence/models/your-model.gguf
+API_HOST=0.0.0.0  # Allow external connections if needed
+API_PORT=8000
+```
+
+### Hardware-Specific Configurations
+
+#### CPU-Only Systems
+```env
+# CPU-only configuration (no GPU acceleration)
+GPU_LAYERS=0
+THREADS=8  # Adjust based on your CPU core count
+CTX_SIZE=4096  # Reduce context size for better CPU performance
+BATCH_SIZE=128  # Lower batch size for CPU
+# Conservative settings for memory usage
+MAX_CONCURRENT_STREAMS=2
+```
+
+#### GPU-Accelerated Systems
+```env
+# GPU-optimized configuration
+GPU_LAYERS=35  # Adjust based on your GPU VRAM (see below)
+THREADS=4  # Reduce CPU threads when using GPU
+CTX_SIZE=8192  # Larger context when GPU accelerated
+BATCH_SIZE=512  # Higher batch size for GPU efficiency
+# Higher concurrency with GPU acceleration
+MAX_CONCURRENT_STREAMS=6
+```
+
+#### GPU VRAM-Specific Settings
+- **4GB VRAM**: `GPU_LAYERS=12`, `CTX_SIZE=2048`, `BATCH_SIZE=64`
+- **6GB VRAM**: `GPU_LAYERS=20`, `CTX_SIZE=4096`, `BATCH_SIZE=128`
+- **8GB VRAM**: `GPU_LAYERS=25`, `CTX_SIZE=4096`, `BATCH_SIZE=256`
+- **12GB+ VRAM**: `GPU_LAYERS=40+`, `CTX_SIZE=8192`, `BATCH_SIZE=512`
+
+#### Cloud/Server Deployment
+```env
+# Cloud/server optimized settings
+API_HOST=0.0.0.0
+API_PORT=8000
+# Allow higher concurrency for server usage
+MAX_CONCURRENT_STREAMS=8
+REQUESTS_PER_SECOND=48
+# Enable metrics for monitoring
+PROMETHEUS_PORT=9000
+# Conservative resource usage
+HEALTH_TIMEOUT_SECONDS=120
+```
+
+#### Compute Cluster Configuration
+```env
+# High-performance cluster settings
+GPU_LAYERS=auto  # Max GPU utilization
+THREADS=auto  # Use more CPU threads
+CTX_SIZE=auto  # Very large context window
+BATCH_SIZE=auto  # Large batch processing
+MAX_CONCURRENT_STREAMS=auto  # High concurrency
+```
+
+#### Low-Resource/Edge Device Configuration
+```env
+# Minimal resource usage for edge devices
+GPU_LAYERS=0
+THREADS=2
+CTX_SIZE=2048
+BATCH_SIZE=32
+MAX_CONCURRENT_STREAMS=1
+REQUESTS_PER_SECOND=6
+QUEUE_SIZE=20
+# Reduce timeouts for quicker response to resource constraints
+HEALTH_TIMEOUT_SECONDS=30
+QUEUE_TIMEOUT_SECONDS=15
+```
+
+### Model-Specific Tuning
+
+#### Small Models (<3B parameters)
+```env
+CTX_SIZE=2048
+BATCH_SIZE=64
+THREADS=2
+GPU_LAYERS=5  # May not need GPU acceleration
+```
+
+#### Medium Models (3B-20B parameters)
+```env
+CTX_SIZE=4096
+BATCH_SIZE=256
+THREADS=6
+GPU_LAYERS=20  # Beneficial for medium models
+```
+
+#### Large Models (>30B parameters)
+```env
+CTX_SIZE=8192
+BATCH_SIZE=512
+THREADS=8
+GPU_LAYERS=35  # Highly recommended for large models
+```
+
+### Use Case-Specific Examples
+
+#### Chatbot Application
+```env
+CTX_SIZE=4096  # Good for conversation history
+BATCH_SIZE=128
+MAX_CONCURRENT_STREAMS=4
+HEALTH_TIMEOUT_SECONDS=60
+QUEUE_TIMEOUT_SECONDS=45  # Reasonable timeout for chat
+```
+
+#### Content Generation
+```env
+CTX_SIZE=8192  # Larger context for creative tasks
+BATCH_SIZE=512  # Higher throughput for generation
+MAX_CONCURRENT_STREAMS=2  # Fewer but longer requests
+REQUESTS_PER_SECOND=12  # Lower rate limit for longer generations
+```
+
+#### API Service
+```env
+API_HOST=0.0.0.0  # Listen on all interfaces
+CTX_SIZE=4096
+BATCH_SIZE=256
+MAX_CONCURRENT_STREAMS=8  # Handle multiple API requests
+REQUESTS_PER_SECOND=36  # Moderate rate limiting
+PROMETHEUS_PORT=9000  # Enable metrics
+```
+
 ## API Reference
 
 Core Endpoints:
