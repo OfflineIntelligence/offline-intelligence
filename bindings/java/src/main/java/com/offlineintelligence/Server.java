@@ -37,6 +37,6 @@ public class Server {
      * @return Version string
      */
     public static String version() {
-        return "0.1.0";
+        return "0.1.2";
     }
 }

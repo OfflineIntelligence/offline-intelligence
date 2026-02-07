@@ -1,6 +1,6 @@
 [package]
 name = "offline-intelligence"
-version = "0.1.1"
+version = "0.1.2"
 description = "High-performance LLM inference engine with memory management - Cross-platform native library with bindings for Python, Java, C++, and JavaScript"
 license = "Apache-2.0"
 repository = "https://github.com/OfflineIntelligence/offline-intelligence"

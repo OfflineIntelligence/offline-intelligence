@@ -1,6 +1,6 @@
 {
   "name": "offline-intelligence",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "JavaScript/Node.js bindings for Offline Intelligence Library",
   "main": "index.js",
   "types": "index.d.ts",
