@@ -1,6 +1,77 @@
-# Offline Intelligence Library
+<div align="center">
+
+<h1>Offline Intelligence Library</h1>
 
 High-performance LLM inference engine with memory management. Cross-platform native library with bindings for Python, Java, C++, and JavaScript.
+
+<br>
+
+[![Crates.io](https://img.shields.io/crates/v/offline-intelligence.svg)](https://crates.io/crates/offline-intelligence)
+[![PyPI](https://img.shields.io/pypi/v/offline-intelligence.svg)](https://pypi.org/project/offline-intelligence/)
+[![npm](https://img.shields.io/npm/v/offline-intelligence.svg)](https://www.npmjs.com/package/offline-intelligence)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/OfflineIntelligence/offline-intelligence/blob/main/LICENSE)
+
+<br>
+
+**[Documentation]** | **[Installation]** | **[Tutorials]** | **[Resources]**
+
+<br>
+
+**Current Version:** v0.1.2 (February 7, 2026) |
+**License:** Apache 2.0
+
+</div>
+
+## Table of Contents
+
+- [Features](#features)
+- [Supported Platforms](#supported-platforms)
+- [Multi-Language Usage Guide](#multi-language-usage-guide)
+- [Installation](#installation)
+- [Model Download & Local Usage](#model-download--local-usage)
+- [Configuration](#configuration)
+- [API Reference](#api-reference)
+- [Performance](#performance)
+- [Security](#security)
+- [System Design & Architecture](#system-design--architecture)
+- [Technical Specifications](#technical-specifications)
+- [API Documentation](#api-documentation)
+- [Developer Guide](#developer-guide)
+- [Use Cases and Applications](#use-cases-and-applications)
+- [Contributing](#contributing)
+- [License](#license)
+- [Support](#support)
+- [Changelog](#changelog)
+- [Citation](#citation)
+
+## Features
+
+The Offline Intelligence Library is a high-performance, cross-platform LLM inference engine designed for enterprise-grade deployments. Built with a modular architecture, it provides optimized performance through hardware-aware resource allocation and supports multiple quantization schemes for different hardware profiles.
+
+Key Features:
+- Multi-language Support: Native bindings for Rust, Python, Java, C++, and JavaScript
+- Hardware Optimization: Automatic resource detection and allocation
+- Memory Management: Persistent conversation storage with SQLite backend
+- Scalable Architecture: Concurrent request handling with rate limiting
+- Monitoring Ready: Prometheus metrics and structured logging
+- Production Ready: Kubernetes-friendly with health checks and readiness probes
+
+Core Principles:
+- Offline-First: Designed to operate without external dependencies
+- Privacy-First: All data processing occurs locally
+- Open Source: 80% of functionality available under Apache 2.0 license
+- Enterprise Ready: Commercial extensions available for advanced features
+
+## Supported Platforms
+
+### Operating Systems
+- Windows: x86_64, ARM64 (Windows 10+)
+- Linux: x86_64, ARM64 (Ubuntu 20.04+, CentOS 8+)
+- macOS: x86_64, Apple Silicon (macOS 11.0+)
+
+### Hardware Architectures
+- x86_64: Intel and AMD 64-bit processors
+- ARM64: Apple Silicon, Raspberry Pi 4, and other ARM 64-bit processors
 
 Project Links:
 - Crates.io: https://crates.io/crates/offline-intelligence
@@ -928,14 +999,21 @@ Enterprise support options include priority support for commercial users, profes
 
 ## Changelog
 
-### v0.1.1 (2026-02-07)
+### v0.1.2 (2026-02-07)
 - Added automatic hardware detection
 - Improved memory management
 - Enhanced error handling
 - Fixed critical security vulnerabilities
 
-### v0.1.0 (2025-12-15)
-- Initial public release
-- Multi-language bindings
-- Core LLM integration
-- Memory management system
+### v0.1.1 (2025-12-15)
+- Initial public release with multi-language bindings, core LLM integration, and memory management system
+
+## Citation
+
+If you use Offline Intelligence Library in your research, please cite it as follows:
+
+```
+Offline Intelligence Library
+Author: Offline Intelligence Team
+URL: https://github.com/OfflineIntelligence/offline-intelligence
+```
