@@ -2,7 +2,7 @@
 
 <h1>Offline Intelligence Library</h1>
 
-High-performance LLM inference engine with memory management. Cross-platform native library with bindings for Python, Java, C++, and JavaScript.
+High-performance LLM inference engine with memory management. Cross-platform native library with bindings for Python, JavaScript, Rust, C++, and Java.
 
 <br>
 
