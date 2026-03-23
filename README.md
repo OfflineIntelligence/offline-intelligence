@@ -17,7 +17,7 @@ High-performance LLM inference engine with memory management. Cross-platform nat
 
 <br>
 
-**Current Version:** v0.1.2 (February 7, 2026) |
+**Current Version:** v0.1.3 (March 22, 2026) |
 **License:** Apache 2.0
 
 </div>
@@ -28,6 +28,7 @@ High-performance LLM inference engine with memory management. Cross-platform nat
 - [Supported Platforms](#supported-platforms)
 - [Multi-Language Usage Guide](#multi-language-usage-guide)
 - [Installation](#installation)
+- [End-to-End Setup](#end-to-end-setup)
 - [Model Download & Local Usage](#model-download--local-usage)
 - [Configuration](#configuration)
 - [API Reference](#api-reference)
@@ -83,9 +84,10 @@ Project Links:
 
 ## Release Versions
 
-Current Version: **v0.1.2** (Released February 7, 2026)
+Current Version: **v0.1.3** (Released March 22, 2026)
 
 Version History:
+- v0.1.3 (2026-03-22): Thread-based server architecture, HTTP-wired SDK bindings (all 5 languages), multi-format model support (.gguf/.onnx/.trt/.safetensors), new backend_url and openrouter_api_key fields, API port changed to 9999, new model/engine/worker management modules, conversation and title APIs
 - v0.1.2 (2026-02-07): Added automatic hardware detection, improved memory management, enhanced error handling, fixed critical security vulnerabilities
 - v0.1.1 (2025-12-15): Initial public release with multi-language bindings, core LLM integration, and memory management system
 
@@ -189,25 +191,53 @@ Modular Architecture:
 The library follows a modular design with clear separation of concerns:
 - api/: HTTP endpoints and route definitions
   - admin_api.rs: Administrative functions
+  - auth_api.rs: JWT authentication and API key management
+  - conversation_api.rs: Conversation CRUD endpoints
+  - stream_api.rs: SSE streaming generation
+  - model_api.rs: Model management and loading
+  - files_api.rs: File and attachment handling
+  - title_api.rs: Conversation title generation
+  - online_api.rs: Online/OpenRouter mode switching
   - memory_api.rs: Memory management endpoints
   - search_api.rs: Search and retrieval functions
-- cache_management/: Caching layer (commercial feature)
-  - cache_bridge.rs: Cache-to-database bridge
+- cache_management/: KV cache management (enabled in v0.1.3)
   - cache_manager.rs: Cache lifecycle management
-- context_engine/: Context processing (commercial feature)
+  - cache_bridge.rs: Cache-to-database bridge
+  - cache_scorer.rs: Cache eviction scoring
+- context_engine/: Context processing
   - context_builder.rs: Context construction algorithms
   - orchestrator.rs: Context management orchestrator
+  - retrieval_planner.rs: Retrieval planning
 - memory_db/: Database layer
   - conversation_store.rs: Conversation storage
   - embedding_store.rs: Embedding vector storage
   - schema.rs: Database schema definitions
+- model_management/: Model lifecycle (new in v0.1.3)
+  - downloader.rs: Model download from HuggingFace
+  - registry.rs: Local and remote model catalog
+  - recommendation.rs: Hardware-aware model recommendations
+  - storage.rs: Model file management
+- model_runtime/: Runtime format support (new in v0.1.3)
+  - Runtimes: GGUF, GGML, ONNX, CoreML, TensorRT, Safetensors
+  - format_detector.rs: Auto-detect model format
+  - platform_detector.rs: Hardware capability detection
+- engine_management/: llama-server binary management (new in v0.1.3)
+  - downloader.rs: Auto-download llama-server binaries
+  - analyzer.rs: Binary capability analysis
+  - registry.rs: Engine version registry
+- worker_threads/: Thread-based worker architecture (new in v0.1.3)
+  - llm_worker.rs: LLM inference worker
+  - context_worker.rs: Context processing worker
+  - cache_worker.rs: Cache management worker
+  - database_worker.rs: Database I/O worker
+- shared_state.rs: Unified application state (Arc-based)
+- backend_target.rs: Lock-free backend URL switching (arc-swap)
+- thread_server.rs: Thread-based server entry point
 - utils/: Utility functions
   - text_utils.rs: Text processing utilities
   - topic_extractor.rs: Topic extraction algorithms
 - config.rs: Configuration management
-- llm_integration.rs: LLM backend integration
-- proxy.rs: API proxy and request handling
-- lib.rs: Public API exports and main logic
+- lib.rs: Public API exports
 
 ## Cross-Platform Support
 
@@ -222,124 +252,163 @@ The library follows a modular design with clear separation of concerns:
 
 ## Multi-Language Usage Guide
 
+> **How it works:** All language bindings (Python, JavaScript, Java, C++) are HTTP clients that talk to the Offline Intelligence Rust server running at port 9999. The Rust server manages the llama-server process and the GGUF model. See [End-to-End Setup](#end-to-end-setup) before running any client code.
+
 ### Rust Usage
 
 Installation:
-Add offline-intelligence = "0.1.2" to your Cargo.toml dependencies
+Add `offline-intelligence = "0.1.3"` to your Cargo.toml dependencies
+
+The Rust crate IS the server. You embed and start it directly in your application.
 
 Basic Usage:
 ```rust
-use offline_intelligence::{Config, run_server};
+use offline_intelligence::{config::Config, run_thread_server};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load configuration from environment variables
-    let config = Config::from_env()?;
-    
-    // Start the LLM inference server
-    run_server(config).await?;
-    
-    Ok(())
+async fn main() -> anyhow::Result<()> {
+    // Loads all settings from .env or environment variables
+    let cfg = Config::from_env()?;
+
+    // Starts the thread-based server on port 9999 (default)
+    // Also auto-launches llama-server on port 8081
+    run_thread_server(cfg, None).await
 }
 ```
 
 Custom Configuration:
 ```rust
-use offline_intelligence::{Config, run_server};
+use offline_intelligence::{config::Config, run_thread_server};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut config = Config::from_env()?;
-    config.api_host = "0.0.0.0".to_string();
-    config.api_port = 8080;
-    config.model_path = "/path/to/model.gguf".to_string();
-    
-    run_server(config).await?;
-    
-    Ok(())
+async fn main() -> anyhow::Result<()> {
+    let mut cfg = Config::from_env()?;
+    cfg.api_host = "0.0.0.0".to_string();
+    cfg.api_port = 9999;
+    cfg.model_path = "/path/to/model.gguf".to_string();
+    cfg.gpu_layers = 35;
+
+    run_thread_server(cfg, None).await
 }
 ```
 
 ### Python Usage
 
 Installation:
-Run pip install offline-intelligence
+```bash
+pip install offline-intelligence==0.1.3
+```
+
+The Python package is a pure HTTP client. The Rust server must be running first.
 
 Basic Usage:
 ```python
-from offline_intelligence import Config, run_server
+from offline_intelligence import OfflineIntelligence, Config
 
-# Load configuration from environment variables
-config = Config.from_env()
+# Reads .env / environment variables automatically
+cfg = Config.from_env()
+ai = OfflineIntelligence(cfg)   # connects to http://127.0.0.1:9999
 
-# Start the server with error handling
-try:
-    success = run_server(config)
-    print(f"Server started: {success}")
-except Exception as e:
-    print(f"Failed to start server: {e}")
+# Health check
+print(ai.health_check())
+
+# Generate text (blocking)
+response = ai.generate("Explain quantum computing in simple terms")
+print(response)
+
+# Streaming — token by token
+for chunk in ai.generate_stream("Write a short poem about the ocean"):
+    print(chunk, end="", flush=True)
+
+# Conversations
+convs = ai.get_conversations()
+print(convs)
+
+# Generate a title for a conversation
+title = ai.generate_title(session_id="abc123", first_message="Tell me about space")
+print(title)
+
+# Memory
+stats = ai.get_memory_stats("abc123")
+ai.optimize_memory()
 ```
 
 Custom Configuration:
 ```python
-from offline_intelligence import Config
+from offline_intelligence import Config, OfflineIntelligence
 
-# Create custom configuration
-config = Config()
-config.api_host = "0.0.0.0"
-config.api_port = 8080
-config.model_path = "/path/to/model.gguf"
+cfg = Config()
+cfg.api_host = "127.0.0.1"
+cfg.api_port = 9999
+cfg.backend_url = "http://127.0.0.1:8081"
+cfg.openrouter_api_key = "sk-or-..."
 
-# Start the server
-success = run_server(config)
+ai = OfflineIntelligence(cfg)
 ```
 
 ### JavaScript/Node.js Usage
 
 Installation:
-Run npm install offline-intelligence
+```bash
+npm install offline-intelligence@0.1.3
+```
+
+The JavaScript package is a pure HTTP client (axios-based). The Rust server must be running first.
 
 Basic Usage:
 ```javascript
-const { Config, OfflineIntelligence } = require('offline-intelligence');
+const { OfflineIntelligence, Config } = require('offline-intelligence');
+
+const cfg = Config.fromEnv();
+const ai = new OfflineIntelligence(cfg);  // connects to http://127.0.0.1:9999
 
 async function main() {
-    try {
-        // Load configuration from environment
-        const config = Config.fromEnv();
-        
-        // Start the server with promise handling
-        const ai = new OfflineIntelligence(config);
-        
-        // Check server health
-        const health = await ai.healthCheck();
-        console.log('Server health:', health);
-        
-        // Generate text
-        const stream = await ai.generateStream('Hello, world!');
-        stream.on('data', (chunk) => {
-            process.stdout.write(chunk.toString());
-        });
-        
-    } catch (error) {
-        console.error('AI operation failed:', error.message);
-    }
+    // Health check
+    const health = await ai.healthCheck();
+    console.log('Server health:', health);
+
+    // Generate text
+    const response = await ai.generate('What is machine learning?');
+    console.log(response);
+
+    // Streaming — callback receives each token
+    await ai.generateStream('Tell me a story', (chunk) => {
+        process.stdout.write(chunk);
+    });
+
+    // Conversations
+    const convs = await ai.getConversations();
+    const conv  = await ai.getConversation(convs[0].id);
+    await ai.deleteConversation(convs[0].id);
+
+    // Title generation
+    const title = await ai.generateTitle('abc123', 'Tell me about black holes');
+    console.log(title);
+
+    // Memory
+    const stats = await ai.getMemoryStats('abc123');
+    await ai.optimizeMemory();
+    await ai.cleanupMemory();
+
+    // Model management
+    await ai.loadModel('/path/to/model.gguf');
+    await ai.stopModel();
 }
 
-main();
+main().catch(console.error);
 ```
 
 Custom Configuration:
 ```javascript
-const { Config } = require('offline-intelligence');
+const { Config, OfflineIntelligence } = require('offline-intelligence');
 
-// Create custom configuration
-const customConfig = new Config();
-customConfig.apiHost = '0.0.0.0';
-customConfig.apiPort = 8080;
+const cfg = new Config();
+cfg.apiHost = '127.0.0.1';
+cfg.apiPort = 9999;
+cfg.backendUrl = 'http://127.0.0.1:8081';
+cfg.openrouterApiKey = 'sk-or-...';
 
-// Use with OfflineIntelligence instance
-const ai = new OfflineIntelligence(customConfig);
+const ai = new OfflineIntelligence(cfg);
 ```
 
 ### Java Usage
@@ -349,7 +418,7 @@ Add the JitPack repository and dependency to your pom.xml or build.gradle:
 - Repository: https://jitpack.io
 - GroupId: com.github.OfflineIntelligence
 - ArtifactId: offline-intelligence
-- Version: 0.1.1
+- Version: v0.1.3
 
 Maven:
 ```xml
@@ -363,7 +432,7 @@ Maven:
 <dependency>
     <groupId>com.github.OfflineIntelligence</groupId>
     <artifactId>offline-intelligence</artifactId>
-    <version>0.1.2</version>
+    <version>v0.1.3</version>
 </dependency>
 ```
 
@@ -374,29 +443,42 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.OfflineIntelligence:offline-intelligence:0.1.2'
+    implementation 'com.github.OfflineIntelligence:offline-intelligence:v0.1.3'
 }
 ```
 
+The Java binding is a Java 11 HttpClient. The Rust server must be running first.
+
 Basic Usage:
 ```java
+import com.offlineintelligence.OfflineIntelligence;
 import com.offlineintelligence.Config;
-import com.offlineintelligence.Server;
-import com.offlineintelligence.OfflineIntelligenceException;
 
-public class AIServer {
-    public static void main(String[] args) {
-        try {
-            // Load configuration from environment
-            Config config = Config.fromEnv();
-            
-            // Start the server with exception handling
-            boolean success = Server.runServer(config);
-            System.out.println("Server started: " + success);
-            
-        } catch (OfflineIntelligenceException e) {
-            System.err.println("Failed to start server: " + e.getMessage());
-        }
+public class Main {
+    public static void main(String[] args) throws Exception {
+        // Reads environment variables automatically
+        Config cfg = Config.fromEnv();
+        OfflineIntelligence ai = new OfflineIntelligence(cfg);
+
+        // Health check
+        System.out.println(ai.healthCheck());
+
+        // Generate text
+        String response = ai.generate("Summarize the theory of relativity");
+        System.out.println(response);
+
+        // Streaming — callback receives each token
+        ai.generateStream("Write a haiku", chunk -> System.out.print(chunk));
+
+        // Conversations
+        System.out.println(ai.getConversations());
+
+        // Title generation
+        System.out.println(ai.generateTitle("abc123", "Tell me about space"));
+
+        // Memory
+        System.out.println(ai.getMemoryStats("abc123"));
+        ai.optimizeMemory();
     }
 }
 ```
@@ -404,52 +486,80 @@ public class AIServer {
 Custom Configuration:
 ```java
 import com.offlineintelligence.Config;
-import com.offlineintelligence.Server;
+import com.offlineintelligence.OfflineIntelligence;
 
-public class CustomAIServer {
-    public static void main(String[] args) {
-        Config customConfig = new Config();
-        customConfig.setApiHost("0.0.0.0");
-        customConfig.setApiPort(8080);
-        customConfig.setModelPath("/path/to/model.gguf");
-        
-        try {
-            Server.runServer(customConfig);
-        } catch (OfflineIntelligenceException e) {
-            System.err.println("Error: " + e.getMessage());
-        }
+public class CustomExample {
+    public static void main(String[] args) throws Exception {
+        Config cfg = new Config();
+        cfg.setApiHost("127.0.0.1");
+        cfg.setApiPort(9999);
+        cfg.setBackendUrl("http://127.0.0.1:8081");
+        cfg.setOpenrouterApiKey("sk-or-...");
+
+        OfflineIntelligence ai = new OfflineIntelligence(cfg);
+        System.out.println(ai.healthCheck());
     }
 }
 ```
 
 ### C++ Usage
 
-Installation:
-Clone the repository and copy the header files to your project:
-- Clone from: https://github.com/OfflineIntelligence/offline-intelligence.git
-- Copy offline_intelligence headers to your project include directory
+Installation — Option A (CMake FetchContent, recommended):
+```cmake
+include(FetchContent)
+
+FetchContent_Declare(
+    offline_intelligence
+    GIT_REPOSITORY https://github.com/OfflineIntelligence/offline-intelligence.git
+    GIT_TAG        v0.1.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(offline_intelligence)
+
+# cpp-httplib and nlohmann_json are fetched automatically
+target_link_libraries(your_target PRIVATE offline_intelligence)
+```
+
+Installation — Option B (Conan):
+```bash
+conan install --requires="offline-intelligence/0.1.3" --build=missing
+```
+
+Installation — Option C (manual):
+Copy `bindings/cpp/include/offline_intelligence/offline_intelligence.hpp` to your project.
+Also add `cpp-httplib` (https://github.com/yhirose/cpp-httplib) and `nlohmann/json` (https://github.com/nlohmann/json) headers.
+
+The C++ binding is a header-only HTTP client. The Rust server must be running first.
 
 Basic Usage:
 ```cpp
 #include <offline_intelligence/offline_intelligence.hpp>
 #include <iostream>
 
-using namespace offline_intelligence;
-
 int main() {
-    try {
-        // Load configuration from environment variables
-        Config config = Config::from_env();
-        
-        // Start the server with exception handling
-        bool success = Server::run_server(config);
-        std::cout << "Server started: " << success << std::endl;
-        
-    } catch (const OfflineIntelligenceException& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
-    }
-    
+    offline_intelligence::Config cfg;
+    cfg.api_host = "127.0.0.1";
+    cfg.api_port = 9999;
+
+    offline_intelligence::OfflineIntelligence ai(cfg);
+
+    // Health check
+    auto health = ai.health_check();
+    std::cout << health.dump(2) << std::endl;
+
+    // Generate text
+    auto response = ai.generate("What is the capital of France?");
+    std::cout << response.dump(2) << std::endl;
+
+    // Streaming — callback receives each token
+    ai.generate_stream("Write a short story", [](const std::string& chunk) {
+        std::cout << chunk << std::flush;
+    });
+
+    // Conversations
+    auto convs = ai.get_conversations();
+    std::cout << convs.dump(2) << std::endl;
+
     return 0;
 }
 ```
@@ -458,29 +568,184 @@ Custom Configuration:
 ```cpp
 #include <offline_intelligence/offline_intelligence.hpp>
 
-using namespace offline_intelligence;
-
 int main() {
-    Config custom_config;
-    custom_config.api_host = "0.0.0.0";
-    custom_config.api_port = 8080;
-    custom_config.model_path = "/path/to/model.gguf";
-    
-    bool success = Server::run_server(custom_config);
-    return success ? 0 : 1;
+    offline_intelligence::Config cfg;
+    cfg.api_host         = "127.0.0.1";
+    cfg.api_port         = 9999;
+    cfg.backend_url      = "http://127.0.0.1:8081";
+    cfg.openrouter_api_key = "sk-or-...";
+    cfg.gpu_layers       = 35;
+
+    offline_intelligence::OfflineIntelligence ai(cfg);
+    auto status = ai.get_status();
+    return 0;
 }
-```
 
 ## Installation
 
 Prerequisites:
-- Rust Toolchain: rustc 1.70+ (for building from source)
-- LLaMA.cpp: Pre-built binary or build from source
-- System Libraries: OpenSSL, pkg-config (Linux/MacOS)
+- Rust Toolchain: rustc 1.70+ (for building from source or running the server)
+- llama-server binary: Download from https://github.com/ggerganov/llama.cpp/releases
+- A GGUF model file: Download from https://huggingface.co/models?library=gguf
+- System Libraries: OpenSSL, pkg-config (Linux/macOS)
+
+Package Managers:
+
+Rust (Cargo):
+```bash
+cargo add offline-intelligence@0.1.3
+# or in Cargo.toml:
+# offline-intelligence = "0.1.3"
+```
+
+Python (PyPI):
+```bash
+pip install offline-intelligence==0.1.3
+```
+
+JavaScript/Node.js (npm):
+```bash
+npm install offline-intelligence@0.1.3
+```
+
+Java (JitPack):
+```xml
+<!-- Maven pom.xml -->
+<repositories>
+    <repository><id>jitpack.io</id><url>https://jitpack.io</url></repository>
+</repositories>
+<dependency>
+    <groupId>com.github.OfflineIntelligence</groupId>
+    <artifactId>offline-intelligence</artifactId>
+    <version>v0.1.3</version>
+</dependency>
+```
+
+C++ (CMake FetchContent):
+```cmake
+FetchContent_Declare(
+    offline_intelligence
+    GIT_REPOSITORY https://github.com/OfflineIntelligence/offline-intelligence.git
+    GIT_TAG v0.1.3
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(offline_intelligence)
+```
+
+C++ (Conan):
+```bash
+conan install --requires="offline-intelligence/0.1.3" --build=missing
+```
+
+## End-to-End Setup
+
+This section walks through the complete setup from zero to running inference in any language.
+
+### Step 1 — Download llama-server
+
+Download the prebuilt binary for your OS from https://github.com/ggerganov/llama.cpp/releases
+
+- Windows: `llama-server.exe` (look for `llama-b*-bin-win-*-x64.zip`)
+- macOS Apple Silicon: `llama-server` (look for `llama-b*-bin-macos-arm64.zip`)
+- macOS Intel: `llama-server` (look for `llama-b*-bin-macos-x64.zip`)
+- Linux x86_64: `llama-server` (look for `llama-b*-bin-ubuntu-x64.zip`)
+
+Place it anywhere, for example:
+- Windows: `C:\llama\llama-server.exe`
+- macOS/Linux: `/usr/local/bin/llama-server`
+
+### Step 2 — Download a GGUF Model
+
+Recommended starting models (choose based on your RAM):
+
+| Model | Size | RAM Needed | Download |
+|-------|------|------------|----------|
+| Llama 3.2 3B Q4 | ~2 GB | 4 GB | https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF |
+| Mistral 7B Q4 | ~4 GB | 8 GB | https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF |
+| Llama 3 8B Q4 | ~5 GB | 10 GB | https://huggingface.co/TheBloke/Llama-3-8B-Instruct-GGUF |
+| Llama 3 70B Q4 | ~40 GB | 48 GB | https://huggingface.co/TheBloke/Llama-3-70B-Instruct-GGUF |
+
+Search for any GGUF model at: https://huggingface.co/models?library=gguf
+
+Create a models directory:
+```bash
+# macOS/Linux
+mkdir -p ~/.offline-intelligence/models
+
+# Windows
+mkdir C:\models
+```
+
+### Step 3 — Create a .env File
+
+Create a `.env` file in the same directory where you will run the server:
+
+```env
+# Required — paths to your llama-server binary and model
+LLAMA_BIN=/usr/local/bin/llama-server
+MODEL_PATH=/home/user/.offline-intelligence/models/llama-3.2-3b-instruct-q4_k_m.gguf
+
+# Server settings
+API_HOST=127.0.0.1
+API_PORT=9999
+LLAMA_HOST=127.0.0.1
+LLAMA_PORT=8081
+
+# Performance (leave blank for auto-detection)
+# CTX_SIZE=8192
+# GPU_LAYERS=20
+# THREADS=6
+# BATCH_SIZE=256
+```
+
+Windows example:
+```env
+LLAMA_BIN=C:\llama\llama-server.exe
+MODEL_PATH=C:\models\llama-3.2-3b-instruct-q4_k_m.gguf
+API_HOST=127.0.0.1
+API_PORT=9999
+LLAMA_HOST=127.0.0.1
+LLAMA_PORT=8081
+```
+
+### Step 4 — Start the Rust Server
+
+The Rust server must be running before any language client can work.
+
+```bash
+# Install the server binary
+cargo install offline-intelligence
+
+# Run it (reads .env from current directory)
+offline-intelligence
+```
+
+Or build and run from source:
+```bash
+git clone https://github.com/OfflineIntelligence/offline-intelligence.git
+cd offline-intelligence
+cargo run --release
+```
+
+Expected startup output:
+```
+Starting with thread-based architecture
+Memory database initialized at: ~/Library/Application Support/Aud.io/data/memory.db
+Model manager initialized successfully
+Starting server on 127.0.0.1:9999
+```
+
+Verify the server is running:
+```bash
+curl http://127.0.0.1:9999/healthz
+# Expected: {"status":"ok"}
+```
+
+### Step 5 — Use Any Language Client
+
+Once the server is running on port 9999, use any of the language clients shown in the [Multi-Language Usage Guide](#multi-language-usage-guide).
 
 ## Model Download & Local Usage
-
-### Downloading Models
 
 The Offline Intelligence Library works with GGUF format models. You can download pre-trained models from the following sources:
 
@@ -522,40 +787,42 @@ The Offline Intelligence Library works with GGUF format models. You can download
    THREADS=8
    GPU_LAYERS=20
    API_HOST=127.0.0.1
-   API_PORT=8000
+   API_PORT=9999
    ```
 
 3. Start the server with your local model:
    ```bash
-   # Using Rust
-   cargo run
-   
-   # Or using Python after installation
-   python -c "from offline_intelligence import Config, run_server; run_server(Config.from_env())"
+   # Install and run the server (reads .env automatically)
+   cargo install offline-intelligence
+   offline-intelligence
+
+   # Or run from source
+   cargo run --release
    ```
 
 Package Managers:
 
 Rust (Cargo):
-Add offline-intelligence = "0.1.2" to your Cargo.toml dependencies
+Add `offline-intelligence = "0.1.3"` to your Cargo.toml dependencies
 
 Python (PyPI):
-Run pip install offline-intelligence
+Run `pip install offline-intelligence==0.1.3`
 
 JavaScript/Node.js (npm):
-Run npm install offline-intelligence
+Run `npm install offline-intelligence@0.1.3`
 
 Java (JitPack):
 Add the JitPack repository and dependency to your pom.xml or build.gradle:
 - Repository: https://jitpack.io
 - GroupId: com.github.OfflineIntelligence
 - ArtifactId: offline-intelligence
-- Version: 0.1.2
+- Version: v0.1.3
 
-C++ (Header-only):
-Clone the repository and copy the header files to your project:
-- Clone from: https://github.com/OfflineIntelligence/offline-intelligence.git
-- Copy offline_intelligence headers to your project include directory
+C++ (Header-only via CMake FetchContent or Conan):
+- CMake: Use `FetchContent_Declare` with `GIT_TAG v0.1.3`
+- Conan: `conan install --requires="offline-intelligence/0.1.3"`
+- Manual: Copy `bindings/cpp/include/offline_intelligence/offline_intelligence.hpp`
+  Requires: `cpp-httplib` and `nlohmann_json` headers
 
 ## Configuration
 
@@ -565,14 +832,16 @@ The library uses environment variables for configuration, with automatic hardwar
 Variable Descriptions:
 - LLAMA_BIN: Path to llama.cpp server binary (required, no auto-detect)
 - MODEL_PATH: Path to GGUF model file (required, auto-detect available)
+- BACKEND_URL: Full URL to llama-server (default: http://127.0.0.1:8081)
+- OPENROUTER_API_KEY: OpenRouter API key for cloud fallback (optional)
 - API_HOST: API server host (default: 127.0.0.1, no auto-detect)
-- API_PORT: API server port (default: 8000, no auto-detect)
+- API_PORT: API server port (default: 9999, no auto-detect)
 - LLAMA_HOST: LLaMA backend host (default: 127.0.0.1, no auto-detect)
 - LLAMA_PORT: LLaMA backend port (default: 8081, no auto-detect)
 - CTX_SIZE: Context window size (default: 8192, auto-detect available)
 - BATCH_SIZE: Processing batch size (default: 256, auto-detect available)
 - THREADS: CPU thread count (default: 6, auto-detect available)
-- GPU_LAYERS: GPU acceleration layers (default: 20, auto-detect available)
+- GPU_LAYERS: GPU acceleration layers (default: auto-detect by platform)
 - MAX_CONCURRENT_STREAMS: Max concurrent requests (default: 4, no auto-detect)
 - PROMETHEUS_PORT: Metrics endpoint port (default: 9000, no auto-detect)
 - REQUESTS_PER_SECOND: Rate limiting threshold (default: 24, no auto-detect)
@@ -590,12 +859,15 @@ Thread Count is automatically calculated based on CPU core count:
 - 32+ cores: Maximum 16 threads
 
 GPU Detection:
-VRAM-Based automatically determines GPU layers based on available VRAM:
-- 0-4GB: 12 GPU layers
-- 5-8GB: 20 GPU layers
-- 9-12GB: 32 GPU layers
-- 13-16GB: 40 GPU layers
-- 16GB+: 50 GPU layers
+GPU layers are auto-detected per platform:
+- Apple Silicon (macOS ARM64): Metal GPU, 24–56 layers based on unified memory
+- Intel Mac (macOS x86_64): 0 layers (CPU only)
+- NVIDIA (Windows/Linux): VRAM-based via NVML or nvidia-smi fallback
+  - 0–4GB VRAM: 12 GPU layers
+  - 5–8GB VRAM: 20 GPU layers
+  - 9–12GB VRAM: 32 GPU layers
+  - 13–16GB VRAM: 40 GPU layers
+  - 16GB+ VRAM: 50 GPU layers
 
 Memory Optimization:
 - Context Size: Inferred from model filename and adjusted for available RAM
@@ -620,7 +892,7 @@ The Offline Intelligence Library is designed to work across different platforms 
 LLAMA_BIN=C:\llama\llama-server.exe
 MODEL_PATH=C:\models\your-model.gguf
 API_HOST=127.0.0.1
-API_PORT=8000
+API_PORT=9999
 # Windows may need lower concurrency
 MAX_CONCURRENT_STREAMS=2
 REQUESTS_PER_SECOND=12
@@ -632,9 +904,10 @@ REQUESTS_PER_SECOND=12
 LLAMA_BIN=/usr/local/bin/llama-server
 MODEL_PATH=/Users/$USER/.offline-intelligence/models/your-model.gguf
 API_HOST=127.0.0.1
-API_PORT=8000
-# macOS Metal support
-GPU_LAYERS=10  # Adjust based on your Mac's GPU
+API_PORT=9999
+# macOS Apple Silicon: Metal GPU auto-detected (24-56 layers)
+# macOS Intel: set GPU_LAYERS=0
+GPU_LAYERS=32
 ```
 
 #### Linux Configuration
@@ -643,7 +916,7 @@ GPU_LAYERS=10  # Adjust based on your Mac's GPU
 LLAMA_BIN=/usr/local/bin/llama-server
 MODEL_PATH=/home/$USER/.offline-intelligence/models/your-model.gguf
 API_HOST=0.0.0.0  # Allow external connections if needed
-API_PORT=8000
+API_PORT=9999
 ```
 
 ### Hardware-Specific Configurations
@@ -680,7 +953,7 @@ MAX_CONCURRENT_STREAMS=6
 ```env
 # Cloud/server optimized settings
 API_HOST=0.0.0.0
-API_PORT=8000
+API_PORT=9999
 # Allow higher concurrency for server usage
 MAX_CONCURRENT_STREAMS=8
 REQUESTS_PER_SECOND=48
@@ -763,6 +1036,7 @@ REQUESTS_PER_SECOND=12  # Lower rate limit for longer generations
 #### API Service
 ```env
 API_HOST=0.0.0.0  # Listen on all interfaces
+API_PORT=9999
 CTX_SIZE=4096
 BATCH_SIZE=256
 MAX_CONCURRENT_STREAMS=8  # Handle multiple API requests
@@ -847,6 +1121,42 @@ Response contains:
 - message_count: Number of messages in session
 - total_tokens: Total tokens in session
 - estimated_cost: Estimated cost of the session
+
+POST /memory/optimize:
+Optimize memory usage across all sessions.
+
+POST /memory/cleanup:
+Clean up stale memory entries.
+
+Conversation Endpoints:
+
+GET /conversations:
+List all conversations.
+
+GET /conversations/{id}:
+Get a specific conversation by ID.
+
+DELETE /conversations/{id}:
+Delete a conversation by ID.
+
+GET /conversations/{id}/title:
+Get the generated title for a conversation.
+
+POST /generate/title:
+Generate a title for a conversation.
+
+Request Body includes:
+- session_id: The session identifier
+- first_message: The first message of the conversation
+
+Mode Endpoints:
+
+POST /mode:
+Switch between local inference and online (OpenRouter) mode.
+
+Request Body includes:
+- mode: "local" or "online"
+- openrouter_api_key: API key (required when switching to online mode)
 
 ## Performance
 
@@ -994,12 +1304,12 @@ Auto-Detection Specifications:
 - Safety Limits: Resource usage capped to prevent exhaustion
 
 Language Binding Specifications:
-Each language binding maintains consistency while leveraging platform-specific optimizations:
-- Rust: Zero-copy data transfer, async/await integration
-- Python: PyO3 integration, NumPy compatibility
-- JavaScript: Native addon, V8 integration
-- Java: JNI optimizations, GC awareness
-- C++: Template metaprogramming, RAII patterns
+All bindings are pure HTTP clients communicating with the Rust server at http://{api_host}:{api_port} (default port 9999):
+- Rust: Embeds the server directly (thread-based architecture, Axum framework)
+- Python: Pure Python using `requests` library, SSE streaming via iteration
+- JavaScript: Pure JavaScript using `axios`, callback-based streaming
+- Java: Java 11 HttpClient, functional interface streaming callbacks
+- C++: Header-only using `cpp-httplib` + `nlohmann/json`, lambda streaming callbacks
 
 Cross-Language Consistency ensures:
 - Configuration: Same structure across all languages
@@ -1160,6 +1470,24 @@ Community support is available through GitHub Issues for bug reports, Discussion
 Enterprise support options include priority support for commercial users, professional services for consulting and custom development, and training sessions.
 
 ## Changelog
+
+### v0.1.3 (2026-03-22)
+- Thread-based server architecture (`run_thread_server`) replacing single-threaded server
+- All 4 language bindings rewritten as HTTP clients (Python, JavaScript, Java, C++)
+- Python: replaced pybind11 C++ stub with pure Python package (`requests`-based)
+- JavaScript: updated to full HTTP client with all API endpoints and TypeScript types
+- Java: replaced JNI stub with Java 11 HttpClient implementation
+- C++: replaced stub with cpp-httplib + nlohmann/json header-only HTTP client
+- Multi-format model support: .gguf, .onnx, .trt, .engine, .safetensors, .ggml, .mlmodel
+- New `backend_url` and `openrouter_api_key` Config fields
+- API port default changed from 8000 to 9999
+- New modules: model_management, model_runtime, engine_management, worker_threads
+- New APIs: conversations CRUD, title generation, memory optimize/cleanup, mode switching
+- KV cache management fully enabled (was proprietary stub in prior versions)
+- Lock-free backend URL switching via `arc-swap`
+- Platform-specific GPU detection: Apple Silicon Metal, NVIDIA NVML, CPU fallback
+- `jitpack.yml` added for JitPack Java build support
+- `conanfile.py` added for C++ Conan package support
 
 ### v0.1.2 (2026-02-07)
 - Added automatic hardware detection
