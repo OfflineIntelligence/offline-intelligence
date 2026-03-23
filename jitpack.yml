@@ -1,0 +1,8 @@
+jdk:
+  - openjdk11
+
+before_install:
+  - echo "Building offline-intelligence Java binding v0.1.3"
+
+install:
+  - cd bindings/java && mvn install -DskipTests
