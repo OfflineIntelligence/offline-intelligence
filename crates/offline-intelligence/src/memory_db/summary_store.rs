@@ -4,7 +4,7 @@
 use crate::memory_db::schema::*;
 use rusqlite::{params, Result, Row};
 use chrono::{DateTime, Utc};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use std::sync::Arc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;

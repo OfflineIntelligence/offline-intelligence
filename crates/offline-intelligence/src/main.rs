@@ -1,6 +1,6 @@
 // _Aud.io/offline-intelligence/crates/src/main.rs
 
-use offline_intelligence::{config::Config, run_server};
+use offline_intelligence::{config::Config, run_thread_server};
 use dotenvy::dotenv;
 
 #[tokio::main]
@@ -9,5 +9,6 @@ async fn main() -> anyhow::Result<()> {
     
     let cfg = Config::from_env()?;
     
-    run_server(cfg).await
+    println!("🚀 Starting with thread-based architecture (only mode available)");
+    run_thread_server(cfg, None).await
 }

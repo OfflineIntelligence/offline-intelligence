@@ -3,6 +3,8 @@ declare class Config {
     llamaBin: string;
     llamaHost: string;
     llamaPort: number;
+    backendUrl: string;
+    openrouterApiKey: string;
     ctxSize: number;
     batchSize: number;
     threads: number;
@@ -19,18 +21,37 @@ declare class Config {
     healthCheckTimeoutSeconds: number;
     queueSize: number;
     queueTimeoutSeconds: number;
-    
+
     static fromEnv(): Config;
 }
 
 declare class OfflineIntelligence {
-    constructor(config: Config);
-    
+    constructor(config?: Config);
+
+    // Health & Status
     healthCheck(): Promise<any>;
-    generateStream(prompt: string, options?: any): Promise<any>;
     getStatus(): Promise<any>;
+
+    // Model Management
     loadModel(modelPath: string): Promise<any>;
-    
+    stopModel(): Promise<any>;
+
+    // Generation
+    generate(prompt: string, options?: Record<string, any>): Promise<any>;
+    generateStream(prompt: string, options?: Record<string, any>): Promise<any>;
+
+    // Conversations
+    getConversations(): Promise<any>;
+    getConversation(id: string): Promise<any>;
+    deleteConversation(id: string): Promise<any>;
+    getConversationTitle(id: string): Promise<any>;
+    generateTitle(sessionId: string, firstMessage: string): Promise<any>;
+
+    // Memory
+    getMemoryStats(sessionId: string): Promise<any>;
+    optimizeMemory(): Promise<any>;
+    cleanupMemory(): Promise<any>;
+
     static version(): string;
 }
 

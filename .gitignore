@@ -13,6 +13,20 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 
+# C++ binding build artifacts
+bindings/cpp/build/
+
+# Python binding build artifacts
+bindings/python/build/
+bindings/python/dist/
+bindings/python/*.egg-info/
+bindings/python/__pycache__/
+bindings/python/**/__pycache__/
+
+# Java binding build artifacts and downloaded JARs
+bindings/java/target/
+bindings/java/lib/
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

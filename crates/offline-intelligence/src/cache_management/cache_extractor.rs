@@ -37,17 +37,21 @@ impl std::fmt::Display for CacheEntryType {
 }
 
 /// Represents a KV cache entry (simplified for extraction)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]  // FIX: Added Serialize and Deserialize
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KVEntry {
     pub key_hash: String,
     pub key_data: Option<Vec<u8>>,
     pub value_data: Vec<u8>,
-    pub key_type: String,
-    pub layer_index: i32,
-    pub head_index: Option<i32>,
+    pub key_type: String,  // attention_key, attention_value, ffn_key, ffn_value
+    pub layer_index: i32,  // Transformer layer index
+    pub head_index: Option<i32>,  // Attention head index (None for FFN)
     pub importance_score: f32,
     pub access_count: i32,
     pub last_accessed: chrono::DateTime<chrono::Utc>,
+    pub token_positions: Option<Vec<u32>>,  // Token positions in the context
+    pub embedding: Option<Vec<f32>>,       // Optional embedding for semantic search
+    pub size_bytes: usize,                 // Actual size in bytes
+    pub is_persistent: bool,               // Whether this entry should be preserved
 }
 
 /// An extracted KV cache entry with its metadata

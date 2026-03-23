@@ -7,10 +7,12 @@ use crate::context_engine::{
     retrieval_planner::RetrievalPlanner,
     tier_manager::{TierManager, TierManagerConfig},
     context_builder::{ContextBuilder, ContextBuilderConfig},
+    smart_retrieval::{SmartRetrieval, SmartRetrievalConfig},
 };
+use crate::worker_threads::LLMWorker;
 
 use std::sync::Arc;
-use tracing::{info, debug, error, warn};
+use tracing::{info, debug, warn};
 use tokio::sync::RwLock;
 
 /// Main orchestrator for the context engine
@@ -20,6 +22,10 @@ pub struct ContextOrchestrator {
     tier_manager: Arc<RwLock<TierManager>>,
     context_builder: Arc<RwLock<ContextBuilder>>,
     config: OrchestratorConfig,
+    /// LLM worker for generating query embeddings during semantic search
+    llm_worker: Option<Arc<LLMWorker>>,
+    /// Smart retrieval for optimized context assembly
+    smart_retrieval: Option<Arc<SmartRetrieval>>,
 }
 
 /// Configuration for the orchestrator
@@ -30,6 +36,10 @@ pub struct OrchestratorConfig {
     pub auto_optimize: bool,
     pub enable_metrics: bool,
     pub session_timeout_seconds: u64,
+    /// Enable smart retrieval optimization (default: true)
+    pub enable_smart_retrieval: bool,
+    /// Smart retrieval configuration
+    pub smart_retrieval_config: SmartRetrievalConfig,
 }
 
 impl Default for OrchestratorConfig {
@@ -40,6 +50,8 @@ impl Default for OrchestratorConfig {
             auto_optimize: true,
             enable_metrics: true,
             session_timeout_seconds: 3600,
+            enable_smart_retrieval: true,  // Enable by default for production
+            smart_retrieval_config: SmartRetrievalConfig::default(),
         }
     }
 }
@@ -65,17 +77,43 @@ impl ContextOrchestrator {
         let context_builder_config = ContextBuilderConfig::default();
         let context_builder = Arc::new(RwLock::new(ContextBuilder::new(context_builder_config)));
         
+        // Initialize smart retrieval if enabled
+        let smart_retrieval = if config.enable_smart_retrieval {
+            let smart_ret = SmartRetrieval::new(
+                Arc::clone(&tier_manager),
+                config.smart_retrieval_config.clone(),
+            );
+            info!("Smart retrieval initialized (enabled)");
+            Some(Arc::new(smart_ret))
+        } else {
+            info!("Smart retrieval disabled");
+            None
+        };
+
         let orchestrator = Self {
             database,
             retrieval_planner,
             tier_manager,
             context_builder,
             config,
+            llm_worker: None,
+            smart_retrieval,
         };
-        
+
         info!("Context orchestrator initialized successfully");
-        
+
         Ok(orchestrator)
+    }
+
+    /// Set the LLM worker for embedding-based semantic search
+    pub fn set_llm_worker(&mut self, worker: Arc<LLMWorker>) {
+        self.llm_worker = Some(worker);
+        info!("Context orchestrator: LLM worker set for semantic search");
+    }
+    
+    /// Chat persistence: Expose database for conversation API handlers
+    pub fn database(&self) -> &Arc<MemoryDatabase> {
+        &self.database
     }
     
     /// Process conversation and return optimized context
@@ -92,21 +130,17 @@ impl ContextOrchestrator {
         
         info!("Processing conversation for session {} ({} messages)", session_id, messages.len());
         
-        // Update current messages in Tier 1 (non-blocking)
-        let tier_manager_clone = self.tier_manager.clone();
-        let session_id_clone = session_id.to_string();
-        let messages_clone = messages.to_vec();
-        
-        tokio::spawn(async move {
-            let mut tier_manager = tier_manager_clone.write().await;
-            let _ = tier_manager.store_tier1_content(&session_id_clone, &messages_clone).await;
-        });
+        // Update current messages in Tier 1
+        {
+            let tier_manager = self.tier_manager.write().await;
+            tier_manager.store_tier1_content(session_id, messages).await;
+        }
         
         // Save ONLY the last user message (new query) to database
         if let Some(last_message) = messages.last() {
             if last_message.role == "user" {
                 let tier_manager = self.tier_manager.read().await;
-                if let Err(e) = tier_manager.store_tier3_content(session_id, &[last_message.clone()]).await {
+                if let Err(e) = tier_manager.store_tier3_content(session_id, std::slice::from_ref(last_message)).await {
                     warn!("Failed to persist user query to database: {}", e);
                 } else {
                     info!("✅ Persisted user query to database for session {}", session_id);
@@ -141,11 +175,44 @@ impl ContextOrchestrator {
             return Ok(messages.to_vec());
         }
         
-        // Execute retrieval plan
-        let retrieved_content = self.execute_retrieval_plan(session_id, &plan).await?;
-        
-        // Build optimized context
-        let optimized_context = {
+        // Execute retrieval plan (includes semantic search when KV cache misses)
+        let retrieved_content = self.execute_retrieval_plan(session_id, &plan, user_query).await?;
+
+        // === SMART RETRIEVAL INTEGRATION ===
+        // If smart retrieval is enabled, use it to optimize the context assembly
+        let optimized_context = if let Some(ref smart_retrieval) = self.smart_retrieval {
+            match smart_retrieval.retrieve(
+                session_id,
+                messages,
+                retrieved_content.tier2.clone(),
+                retrieved_content.tier3.clone(),
+                retrieved_content.cross_session.clone(),
+            ).await {
+                Ok(smart_result) => {
+                    info!(
+                        "🎯 Smart retrieval: Strategy={:?}, Tokens={}, Savings={:.1}%",
+                        smart_result.strategy,
+                        smart_result.retrieved_tokens,
+                        smart_result.compute_savings * 100.0
+                    );
+                    smart_result.messages
+                }
+                Err(e) => {
+                    warn!("Smart retrieval failed, falling back to standard: {}", e);
+                    // Fallback to standard context building
+                    let mut context_builder = self.context_builder.write().await;
+                    context_builder.build_context(
+                        messages,
+                        retrieved_content.tier1,
+                        retrieved_content.tier2,
+                        retrieved_content.tier3,
+                        retrieved_content.cross_session,
+                        user_query,
+                    ).await?
+                }
+            }
+        } else {
+            // Smart retrieval disabled, use standard context building
             let mut context_builder = self.context_builder.write().await;
             context_builder.build_context(
                 messages,
@@ -190,51 +257,145 @@ impl ContextOrchestrator {
         tier_manager.store_tier3_content(session_id, &[assistant_message]).await
     }
     
-    /// Execute retrieval plan across all tiers
+    /// Execute retrieval plan across all tiers.
+    /// When semantic_search is enabled and we have an LLM worker, we embed the query
+    /// and find similar messages via HNSW — this is the core "KV cache miss → DB retrieval" path.
     async fn execute_retrieval_plan(
         &self,
         session_id: &str,
         plan: &RetrievalPlan,
+        user_query: Option<&str>,
     ) -> anyhow::Result<RetrievedContent> {
         let mut retrieved = RetrievedContent::default();
-        
-        // Retrieve from Tier 1 (current context)
+
+        // Retrieve from Tier 1 (current context — hot KV cache)
         if plan.use_tier1 {
             let tier_manager = self.tier_manager.read().await;
             retrieved.tier1 = tier_manager.get_tier1_content(session_id).await;
         }
-        
+
         // Retrieve from Tier 2 (summaries)
         if plan.use_tier2 {
             let tier_manager = self.tier_manager.read().await;
             retrieved.tier2 = tier_manager.get_tier2_content(session_id).await;
         }
-        
-        // Retrieve from Tier 3 (full database)
+
+        // ── Semantic Search: KV cache miss path ──
+        // If the retrieval plan calls for semantic search AND we have embeddings available,
+        // embed the user query and find semantically similar past messages from the DB.
+        // This avoids re-computing full context — we retrieve just the relevant history.
+        //
+        // IMPORTANT: Skip entirely when no embeddings exist yet (first conversation / fresh DB).
+        // This avoids a wasted round-trip to llama-server /v1/embeddings when there's nothing to search.
+        let mut semantic_results: Vec<crate::memory_db::StoredMessage> = Vec::new();
+
+        let has_embeddings = self.database.embeddings.get_stats()
+            .map(|s| s.total_embeddings > 0)
+            .unwrap_or(false);
+
+        if plan.semantic_search && has_embeddings {
+            if let (Some(ref llm_worker), Some(query)) = (&self.llm_worker, user_query) {
+                match llm_worker.generate_embeddings(vec![query.to_string()]).await {
+                    Ok(query_embeddings) if !query_embeddings.is_empty() => {
+                        let query_vec = &query_embeddings[0];
+                        // Search HNSW index for similar past messages
+                        match self.database.embeddings.find_similar_embeddings(
+                            query_vec,
+                            "llama-server",
+                            (plan.max_messages * 2) as i32,
+                            0.3, // similarity threshold
+                        ) {
+                            Ok(similar) if !similar.is_empty() => {
+                                info!("Semantic search found {} similar messages for context retrieval", similar.len());
+                                // Fetch actual message content for each match
+                                for (message_id, _similarity) in &similar {
+                                    // Get message from DB by ID
+                                    let conn = self.database.conversations.get_conn_public();
+                                    if let Ok(conn) = conn {
+                                        let mut stmt = conn.prepare(
+                                            "SELECT id, session_id, message_index, role, content, tokens,
+                                                    timestamp, importance_score, embedding_generated
+                                             FROM messages WHERE id = ?1"
+                                        ).ok();
+                                        if let Some(ref mut stmt) = stmt {
+                                            if let Ok(mut rows) = stmt.query([message_id]) {
+                                                if let Ok(Some(row)) = rows.next() {
+                                                    let ts_str: String = row.get(6).unwrap_or_default();
+                                                    let ts = chrono::DateTime::parse_from_rfc3339(&ts_str)
+                                                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                                                        .unwrap_or_else(|_| chrono::Utc::now());
+                                                    semantic_results.push(crate::memory_db::StoredMessage {
+                                                        id: row.get(0).unwrap_or(0),
+                                                        session_id: row.get(1).unwrap_or_default(),
+                                                        message_index: row.get(2).unwrap_or(0),
+                                                        role: row.get(3).unwrap_or_default(),
+                                                        content: row.get(4).unwrap_or_default(),
+                                                        tokens: row.get(5).unwrap_or(0),
+                                                        timestamp: ts,
+                                                        importance_score: row.get(7).unwrap_or(0.5),
+                                                        embedding_generated: row.get(8).unwrap_or(true),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(_) => debug!("Semantic search: no results above threshold"),
+                            Err(e) => debug!("Semantic search failed: {}", e),
+                        }
+                    }
+                    Ok(_) => debug!("Empty embedding response for query"),
+                    Err(e) => debug!("Query embedding generation failed (semantic search skipped): {}", e),
+                }
+            }
+        }
+
+        // Retrieve from Tier 3 (full database) — keyword fallback or supplement
         if plan.use_tier3 {
             let tier_manager = self.tier_manager.read().await;
             if plan.keyword_search && !plan.search_topics.is_empty() {
                 for topic in &plan.search_topics {
                     let limit_per_topic = plan.max_messages / plan.search_topics.len().max(1);
-                    
+
                     if let Ok(results) = tier_manager.search_tier3_content(
                         session_id,
                         topic,
                         limit_per_topic,
                     ).await {
-                        retrieved.tier3 = Some(results);
+                        // Merge with semantic results, deduplicating by message ID
+                        let semantic_ids: std::collections::HashSet<i64> = semantic_results.iter().map(|m| m.id).collect();
+                        let mut merged = semantic_results.clone();
+                        for msg in results {
+                            if !semantic_ids.contains(&msg.id) {
+                                merged.push(msg);
+                            }
+                        }
+                        retrieved.tier3 = Some(merged);
                         break;
                     }
                 }
+                // If keyword search found nothing but semantic did, use semantic results
+                if retrieved.tier3.is_none() && !semantic_results.is_empty() {
+                    retrieved.tier3 = Some(semantic_results.clone());
+                }
             } else {
-                retrieved.tier3 = tier_manager.get_tier3_content(
-                    session_id,
-                    Some((plan.max_messages as i64).min(i32::MAX as i64) as i32),
-                    Some(0),
-                ).await.ok();
+                if !semantic_results.is_empty() {
+                    // Use semantic results as tier3 content
+                    retrieved.tier3 = Some(semantic_results.clone());
+                } else {
+                    retrieved.tier3 = tier_manager.get_tier3_content(
+                        session_id,
+                        Some((plan.max_messages as i64).min(i32::MAX as i64) as i32),
+                        Some(0),
+                    ).await.ok();
+                }
             }
+        } else if !semantic_results.is_empty() {
+            // Even if tier3 wasn't planned, if semantic search found relevant content, use it
+            retrieved.tier3 = Some(semantic_results);
         }
-        
+
         // Add cross-session search if needed
         if plan.cross_session_search && !plan.search_topics.is_empty() {
             let tier_manager = self.tier_manager.read().await;
@@ -246,7 +407,7 @@ impl ContextOrchestrator {
                 retrieved.cross_session = Some(cross_session_results);
             }
         }
-        
+
         Ok(retrieved)
     }
     
@@ -279,6 +440,27 @@ impl ContextOrchestrator {
         })
     }
     
+    /// Search messages across sessions by keywords
+    pub async fn search_messages(
+        &self,
+        session_id: Option<&str>,
+        keywords: &[String],
+        limit: usize,
+    ) -> anyhow::Result<Vec<crate::memory_db::StoredMessage>> {
+        if keywords.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        if let Some(sid) = session_id {
+            // Search within specific session
+            self.database.search_messages_by_keywords(sid, keywords, limit).await
+        } else {
+            // Search across all sessions (would need cross-session search implementation)
+            // For now, return empty results for global search
+            Ok(Vec::new())
+        }
+    }
+    
     pub fn set_enabled(&mut self, enabled: bool) {
         self.config.enabled = enabled;
         info!("Context engine {}", if enabled { "enabled" } else { "disabled" });
@@ -292,6 +474,11 @@ impl ContextOrchestrator {
     pub fn get_config(&self) -> &OrchestratorConfig {
         &self.config
     }
+
+    // Chat persistence: Expose tier manager to ensure sessions exist before processing
+    pub fn tier_manager(&self) -> &Arc<RwLock<TierManager>> {
+        &self.tier_manager
+    }
 }
 
 impl Clone for ContextOrchestrator {
@@ -302,6 +489,8 @@ impl Clone for ContextOrchestrator {
             tier_manager: self.tier_manager.clone(),
             context_builder: self.context_builder.clone(),
             config: self.config.clone(),
+            llm_worker: self.llm_worker.clone(),
+            smart_retrieval: self.smart_retrieval.clone(),
         }
     }
 }

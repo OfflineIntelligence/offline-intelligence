@@ -23,6 +23,12 @@ pub struct InMemoryMemoryStore {
 
 impl InMemoryMemoryStore {
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for InMemoryMemoryStore {
+    fn default() -> Self {
         Self {
             store: Arc::new(DashMap::new()),
         }
@@ -38,7 +44,7 @@ impl MemoryStore for InMemoryMemoryStore {
     }
 
     fn add_message(&self, session_id: &str, message: Message) {
-        let mut entry = self.store.entry(session_id.to_string()).or_insert(Vec::new());
+        let mut entry = self.store.entry(session_id.to_string()).or_default();
         entry.push(message);
     }
 

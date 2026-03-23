@@ -78,8 +78,10 @@ impl RetrievalPlanner {
         user_query: Option<&str>,
         has_past_refs: bool, // NEW parameter
     ) -> anyhow::Result<RetrievalPlan> {
-        let mut plan = RetrievalPlan::default();
-        plan.max_tokens = max_context_tokens;
+        let mut plan = RetrievalPlan {
+            max_tokens: max_context_tokens,
+            ..Default::default()
+        };
         
         // Check user query first for past references
         let mut has_past_references_in_query = false;
@@ -215,13 +217,11 @@ impl RetrievalPlanner {
         messages: &[Message],
         user_query: Option<&str>,
     ) -> anyhow::Result<ConversationAnalysis> {
-        let mut analysis = ConversationAnalysis::default();
-        
-        // Extract topics from recent messages
-        analysis.extracted_topics = self.extract_topics(messages);
-        
-        // Check for explicit references to past content in recent messages
-        analysis.has_past_references = self.has_past_references_in_messages(messages);
+        let mut analysis = ConversationAnalysis {
+            extracted_topics: self.extract_topics(messages),
+            has_past_references: self.has_past_references_in_messages(messages),
+            ..Default::default()
+        };
         
         // Check if query asks for specific information
         if let Some(query) = user_query {
@@ -342,7 +342,7 @@ impl RetrievalPlanner {
         
         // Assume ~50 tokens per message on average
         let estimated_messages = available_for_retrieval / 50;
-        plan.max_messages = estimated_messages.max(10).min(100);
+        plan.max_messages = estimated_messages.clamp(10, 100);
     }
     
     /// Extract topics from messages
@@ -484,18 +484,13 @@ struct ConversationAnalysis {
 }
 
 /// Pattern of message recency
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 enum RecencyPattern {
+    #[default]
     RecentOnly,
     TopicContinuation,
     TopicJumping,
     Mixed,
-}
-
-impl Default for RecencyPattern {
-    fn default() -> Self {
-        RecencyPattern::RecentOnly
-    }
 }
 
 impl Clone for RetrievalPlanner {

@@ -1,13 +1,16 @@
 package com.offlineintelligence;
 
 /**
- * Configuration class for Offline Intelligence engine
+ * Configuration for the Offline Intelligence HTTP client.
+ * Version: 0.1.3
  */
 public class Config {
     private String modelPath;
     private String llamaBin;
     private String llamaHost;
     private int llamaPort;
+    private String backendUrl;
+    private String openrouterApiKey;
     private int ctxSize;
     private int batchSize;
     private int threads;
@@ -25,12 +28,13 @@ public class Config {
     private int queueSize;
     private long queueTimeoutSeconds;
 
-    // Constructor
     public Config() {
         this.modelPath = "default.gguf";
         this.llamaBin = "llama-server";
         this.llamaHost = "127.0.0.1";
         this.llamaPort = 8081;
+        this.backendUrl = "http://127.0.0.1:8081";
+        this.openrouterApiKey = "";
         this.ctxSize = 8192;
         this.batchSize = 256;
         this.threads = 6;
@@ -40,7 +44,7 @@ public class Config {
         this.maxConcurrentStreams = 4;
         this.prometheusPort = 9000;
         this.apiHost = "127.0.0.1";
-        this.apiPort = 8000;
+        this.apiPort = 9999;
         this.requestsPerSecond = 24;
         this.generateTimeoutSeconds = 300;
         this.streamTimeoutSeconds = 600;
@@ -49,10 +53,21 @@ public class Config {
         this.queueTimeoutSeconds = 30;
     }
 
-    // Static factory method
+    /** Create a Config populated from environment variables. */
     public static Config fromEnv() {
-        return new Config();
-        // In real implementation, would read from System.getenv()
+        Config cfg = new Config();
+        String v;
+        if ((v = System.getenv("MODEL_PATH")) != null) cfg.modelPath = v;
+        if ((v = System.getenv("LLAMA_BIN")) != null) cfg.llamaBin = v;
+        if ((v = System.getenv("LLAMA_HOST")) != null) cfg.llamaHost = v;
+        if ((v = System.getenv("LLAMA_PORT")) != null) cfg.llamaPort = Integer.parseInt(v);
+        if ((v = System.getenv("BACKEND_URL")) != null) cfg.backendUrl = v;
+        if ((v = System.getenv("OPENROUTER_API_KEY")) != null) cfg.openrouterApiKey = v;
+        if ((v = System.getenv("API_HOST")) != null) cfg.apiHost = v;
+        if ((v = System.getenv("API_PORT")) != null) cfg.apiPort = Integer.parseInt(v);
+        if ((v = System.getenv("CTX_SIZE")) != null) cfg.ctxSize = Integer.parseInt(v);
+        if ((v = System.getenv("GPU_LAYERS")) != null) cfg.gpuLayers = Integer.parseInt(v);
+        return cfg;
     }
 
     // Getters and setters
@@ -67,6 +82,12 @@ public class Config {
 
     public int getLlamaPort() { return llamaPort; }
     public void setLlamaPort(int llamaPort) { this.llamaPort = llamaPort; }
+
+    public String getBackendUrl() { return backendUrl; }
+    public void setBackendUrl(String backendUrl) { this.backendUrl = backendUrl; }
+
+    public String getOpenrouterApiKey() { return openrouterApiKey; }
+    public void setOpenrouterApiKey(String openrouterApiKey) { this.openrouterApiKey = openrouterApiKey; }
 
     public int getCtxSize() { return ctxSize; }
     public void setCtxSize(int ctxSize) { this.ctxSize = ctxSize; }
@@ -115,4 +136,10 @@ public class Config {
 
     public long getQueueTimeoutSeconds() { return queueTimeoutSeconds; }
     public void setQueueTimeoutSeconds(long queueTimeoutSeconds) { this.queueTimeoutSeconds = queueTimeoutSeconds; }
+
+    @Override
+    public String toString() {
+        return "Config{apiHost='" + apiHost + "', apiPort=" + apiPort +
+               ", modelPath='" + modelPath + "'}";
+    }
 }

@@ -9,6 +9,16 @@ use std::sync::Arc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 
+/// Parameters for storing a message
+pub struct MessageParams<'a> {
+    pub session_id: &'a str,
+    pub role: &'a str,
+    pub content: &'a str,
+    pub message_index: i32,
+    pub tokens: i32,
+    pub importance_score: f32,
+}
+
 /// Manages conversation storage and retrieval using a connection pool
 pub struct ConversationStore {
     pool: Arc<Pool<SqliteConnectionManager>>,
@@ -23,6 +33,11 @@ impl ConversationStore {
     /// Internal helper to get a connection from the pool
     fn get_conn(&self) -> anyhow::Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| anyhow::anyhow!("Failed to get connection from pool: {}", e))
+    }
+
+    /// Public connection accessor for cross-module queries (e.g., search_api)
+    pub fn get_conn_public(&self) -> anyhow::Result<r2d2::PooledConnection<SqliteConnectionManager>> {
+        self.get_conn()
     }
 
     // --- Transactional & Internal Helpers ---
@@ -40,16 +55,11 @@ impl ConversationStore {
     /// Store a message using an external transaction
     pub fn store_message_with_tx(
         &self,
-        tx: &mut Connection, // Accepts a connection or transaction
-        session_id: &str,
-        role: &str,
-        content: &str,
-        message_index: i32,
-        tokens: i32,
-        importance_score: f32,
+        tx: &mut Connection,
+        params: MessageParams,
     ) -> anyhow::Result<StoredMessage> {
         // Update session access time
-        self.update_session_access_with_conn(tx, session_id)?;
+        self.update_session_access_with_conn(tx, params.session_id)?;
         
         let now = Utc::now();
         
@@ -58,13 +68,13 @@ impl ConversationStore {
              (session_id, message_index, role, content, tokens, timestamp, importance_score, embedding_generated)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
-                session_id,
-                message_index,
-                role,
-                content,
-                tokens,
+                params.session_id,
+                params.message_index,
+                params.role,
+                params.content,
+                params.tokens,
                 now.to_rfc3339(),
-                importance_score,
+                params.importance_score,
                 false,
             ],
         )?;
@@ -73,13 +83,13 @@ impl ConversationStore {
         
         Ok(StoredMessage {
             id,
-            session_id: session_id.to_string(),
-            message_index,
-            role: role.to_string(),
-            content: content.to_string(),
-            tokens,
+            session_id: params.session_id.to_string(),
+            message_index: params.message_index,
+            role: params.role.to_string(),
+            content: params.content.to_string(),
+            tokens: params.tokens,
             timestamp: now,
-            importance_score,
+            importance_score: params.importance_score,
             embedding_generated: false,
         })
     }
@@ -102,7 +112,7 @@ impl ConversationStore {
         
         let tx = conn.transaction()?;
         {
-            for (idx, (role, content, message_index, tokens, importance_score)) in messages.iter().enumerate() {
+            for (role, content, message_index, tokens, importance_score) in messages.iter() {
                 tx.execute(
                     "INSERT INTO messages 
                      (session_id, message_index, role, content, tokens, timestamp, importance_score, embedding_generated)
@@ -162,11 +172,7 @@ impl ConversationStore {
     // --- Session & Message Management ---
 
     pub fn create_session(&self, metadata: Option<SessionMetadata>) -> anyhow::Result<Session> {
-        self.create_session_with_id(None, metadata)
-    }
-
-    pub fn create_session_with_id(&self, session_id: Option<String>, metadata: Option<SessionMetadata>) -> anyhow::Result<Session> {
-        let session_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let session_id = Uuid::new_v4().to_string();
         let now = Utc::now();
         let metadata = metadata.unwrap_or_default();
         let metadata_json = serde_json::to_string(&metadata)?;
@@ -180,6 +186,94 @@ impl ConversationStore {
         Ok(Session { id: session_id, created_at: now, last_accessed: now, metadata })
     }
 
+    /// Chat persistence: Create session with frontend-provided ID to maintain ID consistency across frontend and backend
+    pub fn create_session_with_id(&self, session_id: &str, metadata: Option<SessionMetadata>) -> anyhow::Result<Session> {
+        let now = Utc::now();
+        let metadata = metadata.unwrap_or_default();
+        let metadata_json = serde_json::to_string(&metadata)?;
+        
+        let conn = self.get_conn()?;
+        conn.execute(
+            "INSERT INTO sessions (id, created_at, last_accessed, metadata) VALUES (?1, ?2, ?3, ?4)",
+            params![session_id, now.to_rfc3339(), now.to_rfc3339(), metadata_json],
+        )?;
+        
+        info!("Created session with ID: {}", session_id);
+        Ok(Session { id: session_id.to_string(), created_at: now, last_accessed: now, metadata })
+    }
+
+    /// Chat persistence: Update session title after auto-generation, also refresh last_accessed.
+    /// Handles the race condition where title update arrives before the session is created
+    /// by the streaming endpoint, using INSERT OR IGNORE to avoid UNIQUE constraint failures.
+    pub fn update_session_title(&self, session_id: &str, title: &str) -> anyhow::Result<()> {
+        let conn = self.get_conn()?;
+        let now = Utc::now();
+
+        // Ensure the session exists first (INSERT OR IGNORE handles concurrent creation)
+        let default_metadata = SessionMetadata {
+            title: Some(title.to_string()),
+            ..Default::default()
+        };
+        let default_metadata_json = serde_json::to_string(&default_metadata)?;
+
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, created_at, last_accessed, metadata) VALUES (?1, ?2, ?3, ?4)",
+            params![session_id, now.to_rfc3339(), now.to_rfc3339(), default_metadata_json],
+        )?;
+
+        // Now fetch and update metadata (session is guaranteed to exist)
+        let mut stmt = conn.prepare("SELECT metadata FROM sessions WHERE id = ?1")?;
+        let mut rows = stmt.query([session_id])?;
+
+        if let Some(row) = rows.next()? {
+            let metadata_json: String = row.get(0)?;
+            let mut metadata: SessionMetadata = serde_json::from_str(&metadata_json)
+                .unwrap_or_default();
+
+            metadata.title = Some(title.to_string());
+            let updated_metadata_json = serde_json::to_string(&metadata)?;
+
+            conn.execute(
+                "UPDATE sessions SET metadata = ?1, last_accessed = ?2 WHERE id = ?3",
+                params![updated_metadata_json, now.to_rfc3339(), session_id],
+            )?;
+
+            info!("Updated session {} title to: {}", session_id, title);
+        }
+
+        Ok(())
+    }
+
+    pub fn update_session_pinned(&self, session_id: &str, pinned: bool) -> anyhow::Result<()> {
+        let conn = self.get_conn()?;
+        
+        // Fetch current metadata
+        let mut stmt = conn.prepare("SELECT metadata FROM sessions WHERE id = ?1")?;
+        let mut rows = stmt.query([session_id])?;
+        
+        if let Some(row) = rows.next()? {
+            let metadata_json: String = row.get(0)?;
+            let mut metadata: SessionMetadata = serde_json::from_str(&metadata_json)
+                .unwrap_or_default();
+            
+            // Update pinned status
+            metadata.pinned = pinned;
+            let updated_metadata_json = serde_json::to_string(&metadata)?;
+            
+            // Update session with new metadata only; pinning is a UI organization action
+            // and does not constitute accessing the conversation content, so don't update last_accessed
+            conn.execute(
+                "UPDATE sessions SET metadata = ?1 WHERE id = ?2",
+                params![updated_metadata_json, session_id],
+            )?;
+            
+            info!("Updated session {} pinned status to: {}", session_id, pinned);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Session {} not found", session_id))
+        }
+    }
+
     pub fn get_session(&self, session_id: &str) -> anyhow::Result<Option<Session>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare("SELECT id, created_at, last_accessed, metadata FROM sessions WHERE id = ?1")?;
@@ -190,6 +284,22 @@ impl ConversationStore {
         } else {
             Ok(None)
         }
+    }
+
+    /// Chat persistence: Retrieve all sessions for sidebar display, ordered by recency
+    pub fn get_all_sessions(&self) -> anyhow::Result<Vec<Session>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, created_at, last_accessed, metadata FROM sessions ORDER BY last_accessed DESC"
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut sessions = Vec::new();
+        
+        while let Some(row) = rows.next()? {
+            sessions.push(self.row_to_session(row)?);
+        }
+        
+        Ok(sessions)
     }
 
     // --- Parsing Logic ---
@@ -253,6 +363,16 @@ impl ConversationStore {
         let mut messages = Vec::new();
         while let Some(row) = rows.next()? { messages.push(self.row_to_stored_message(row)?); }
         Ok(messages)
+    }
+
+    pub fn get_session_message_count(&self, session_id: &str) -> anyhow::Result<usize> {
+        let conn = self.get_conn()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
+            [session_id],
+            |row| row.get(0)
+        )?;
+        Ok(count as usize)
     }
 
     pub fn mark_embedding_generated(&self, message_id: i64) -> anyhow::Result<()> {
@@ -351,9 +471,9 @@ impl ConversationStore {
         }
         
         // Add keyword search
-        for i in 0..patterns.len() {
+        for pattern in &patterns {
             query.push_str(" AND LOWER(m.content) LIKE ?");
-            params.push(Box::new(patterns[i].clone())); // Clone the pattern
+            params.push(Box::new(pattern.clone())); // Clone the pattern
         }
         
         // Order by relevance (keyword matches + recency + importance)

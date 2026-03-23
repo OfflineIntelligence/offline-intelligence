@@ -5,7 +5,7 @@ use crate::memory_db::schema::*;
 use rusqlite::{params, Result, Row};
 use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use hora::core::ann_index::ANNIndex;
@@ -76,7 +76,8 @@ impl EmbeddingStore {
             let embedding: Vec<f32> = bincode::deserialize(&embedding_bytes)
                 .map_err(|e| anyhow::anyhow!("Deserialization error: {}", e))?;
             
-            index.add(&embedding, message_id);
+            // Ignore duplicate insert errors while rebuilding the ANN index
+            let _ = index.add(&embedding, message_id);
             cache.insert(message_id, embedding);
         }
         
@@ -101,7 +102,8 @@ impl EmbeddingStore {
         cache.insert(embedding.message_id, embedding.embedding.clone());
 
         if let Some(ref mut index) = *self.ann_index.write().unwrap() {
-            index.add(&embedding.embedding, embedding.message_id);
+            // Ignore add errors; rebuild ensures index stays consistent
+            let _ = index.add(&embedding.embedding, embedding.message_id);
             // Re-building after every add is expensive, but necessary for HNSW 
             // if you want immediate searchability of the new item.
             index.build(Metric::CosineSimilarity)

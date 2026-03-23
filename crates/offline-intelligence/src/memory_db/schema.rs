@@ -14,11 +14,16 @@ pub struct Session {
     pub metadata: SessionMetadata,
 }
 
+// Chat persistence: Session metadata with serde defaults for backward compatibility with existing database records
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionMetadata {
     pub title: Option<String>,
+    #[serde(default)]  // Handle old records missing this field
     pub tags: Vec<String>,
+    #[serde(default)]  // Handle old records missing this field
     pub user_defined: HashMap<String, String>,
+    #[serde(default)]  // Handle old records missing this field
+    pub pinned: bool,
 }
 
 /// Represents a single message in a conversation

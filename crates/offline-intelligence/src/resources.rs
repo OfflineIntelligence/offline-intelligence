@@ -4,7 +4,6 @@ pub const HAS_EMBEDDED_RESOURCES: bool = false;
 
 use std::fs;
 use std::path::Path;
-use std::io::Write;
 use anyhow::Context;
 
 pub struct ResourceManager;

@@ -7,6 +7,7 @@ pub mod cache_config;
 pub mod cache_extractor;
 pub mod cache_manager;
 pub mod cache_scorer;
+pub mod llama_cache_interface;
 
 // Re-exports
 pub use cache_bridge::{CacheContextBridge, CacheBridgeStats, CacheTransition, TransitionType};
@@ -18,6 +19,7 @@ pub use cache_manager::{
     CacheStatisticsExport, MaintenanceResult
 };
 pub use cache_scorer::{CacheEntryScorer, CacheScoringConfig};
+pub use llama_cache_interface::{LlamaKVCacheInterface, LlamaKVCacheState};
 
 /// Create a default KV cache manager
 pub fn create_default_cache_manager(

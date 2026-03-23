@@ -1,7 +1,6 @@
 //! Common topic extraction utilities
 
 use crate::memory::Message;
-use regex::Regex;
 use lazy_static::lazy_static;
 
 lazy_static! {

@@ -7,11 +7,11 @@ import time
 from typing import List, Dict, Any, Generator, Optional
 
 HOST = "localhost"
-PORT = 8000
+PORT = 9999
 TIMEOUT = 120
 
 class StreamingChatClient:
-    def __init__(self, host="localhost", port=8000):
+    def __init__(self, host="localhost", port=9999):
         self.host = host
         self.port = port
         
@@ -24,7 +24,7 @@ class StreamingChatClient:
             "messages": messages,
             "max_tokens": 2000,
             "stream": True,
-            "temperature": 0.2
+            "temperature": 0.7
         })
         
         headers = {
@@ -115,7 +115,7 @@ class StreamingChatClient:
             "messages": messages,
             "max_tokens": 2000,
             "stream": False,
-            "temperature": 0.2
+            "temperature": 0.7
         })
         
         headers = {'Content-Type': 'application/json'}

@@ -2,7 +2,6 @@
 
 use regex::Regex;
 use std::collections::HashMap;
-use tracing::debug;
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -41,6 +40,18 @@ lazy_static! {
         
         m
     };
+}
+
+/// Parameters for scoring a cache entry
+pub struct CacheEntryParams<'a> {
+    pub key_hash: &'a str,
+    pub key_data: Option<&'a [u8]>,
+    pub key_type: &'a str,
+    pub layer_index: i32,
+    pub head_index: Option<i32>,
+    pub access_count: i32,
+    pub last_accessed_seconds_ago: f32,
+    pub value_size_bytes: usize,
 }
 
 /// Scores importance of KV cache entries
@@ -88,28 +99,18 @@ impl CacheEntryScorer {
     }
 
     /// Score a KV cache entry based on various factors
-    pub fn score_entry(
-        &self,
-        key_hash: &str,
-        key_data: Option<&[u8]>,
-        key_type: &str,
-        layer_index: i32,
-        head_index: Option<i32>,
-        access_count: i32,
-        last_accessed_seconds_ago: f32,
-        value_size_bytes: usize,
-    ) -> f32 {
+    pub fn score_entry(&self, params: CacheEntryParams) -> f32 {
         let mut score = 0.0;
 
-        score += self.score_recency(last_accessed_seconds_ago);
-        score += self.score_access_count(access_count);
-        score += self.score_key_patterns(key_data, key_type);
-        score += self.score_layer_position(layer_index);
-        score += self.score_head_position(head_index);
-        score += self.score_value_size(value_size_bytes);
-        score += self.score_key_engagement(key_hash);
+        score += self.score_recency(params.last_accessed_seconds_ago);
+        score += self.score_access_count(params.access_count);
+        score += self.score_key_patterns(params.key_data, params.key_type);
+        score += self.score_layer_position(params.layer_index);
+        score += self.score_head_position(params.head_index);
+        score += self.score_value_size(params.value_size_bytes);
+        score += self.score_key_engagement(params.key_hash);
 
-        score.min(1.0).max(0.0)
+        score.clamp(0.0, 1.0)
     }
 
     fn score_recency(&self, seconds_ago: f32) -> f32 {

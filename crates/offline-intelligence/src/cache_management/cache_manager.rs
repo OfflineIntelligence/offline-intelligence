@@ -1,17 +1,17 @@
 //! Main KV cache management engine
 
 use crate::memory::Message;
-use crate::memory_db::{MemoryDatabase, StoredMessage};
-use crate::cache_management::cache_config::{KVCacheConfig, RetrievalStrategy, SnapshotStrategy};
-use crate::cache_management::cache_extractor::{CacheExtractor, ExtractedCacheEntry, KVEntry, CacheEntryScorer as ExtractorScorer};
+use crate::memory_db::MemoryDatabase;
+use crate::cache_management::cache_config::{KVCacheConfig, SnapshotStrategy};
+use crate::cache_management::cache_extractor::{CacheExtractor, ExtractedCacheEntry, KVEntry};
 use crate::cache_management::cache_scorer::{CacheEntryScorer, CacheScoringConfig};
-use crate::cache_management::cache_bridge::{CacheContextBridge, TransitionType};
+use crate::cache_management::cache_bridge::CacheContextBridge;
 
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{info, warn, debug, error};
+use tracing::{info, debug};
 use chrono::{Utc, DateTime};
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
 
 /// Main KV cache management engine
 pub struct KVCacheManager {
@@ -22,6 +22,7 @@ pub struct KVCacheManager {
     context_bridge: CacheContextBridge,
     statistics: CacheStatistics,
     session_state: HashMap<String, SessionCacheState>,
+    llm_worker: Option<Arc<crate::worker_threads::LLMWorker>>,
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ pub struct SessionCacheState {
     pub metadata: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct CacheStatistics {
     pub total_clears: usize,
     pub total_retrievals: usize,
@@ -91,7 +92,7 @@ pub struct CacheClearResult {
     pub clear_reason: ClearReason,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RetrievalResult {
     pub retrieved_entries: Vec<RetrievedEntry>,
     pub bridge_message: Option<String>,
@@ -140,6 +141,7 @@ impl KVCacheManager {
             context_bridge,
             statistics: CacheStatistics::new(),
             session_state: HashMap::new(),
+            llm_worker: None,
         })
     }
     
@@ -163,7 +165,7 @@ impl KVCacheManager {
         session_id: &str,
         messages: &[Message],
         current_kv_entries: &[KVEntry],
-        current_cache_size_bytes: usize,
+        _current_cache_size_bytes: usize,
         max_cache_size_bytes: usize,
     ) -> anyhow::Result<CacheProcessingResult> {
         debug!("Processing conversation for session: {}", session_id);
@@ -174,13 +176,15 @@ impl KVCacheManager {
             .map(|s| s.conversation_count)
             .unwrap_or(0);
         
+        // Calculate actual cache memory usage
+        let actual_cache_memory = self.calculate_cache_memory_usage(current_kv_entries);
         let should_clear_by_conversation = self.should_clear_by_conversation(current_conversation_count + 1);
-        let should_clear_by_memory = self.should_clear_by_memory(current_cache_size_bytes, max_cache_size_bytes);
+        let should_clear_by_memory = self.should_clear_by_memory(actual_cache_memory, max_cache_size_bytes);
         
         // Now get mutable reference
         let session_state = self.get_or_create_session_state(session_id);
         session_state.conversation_count += 1;
-        session_state.cache_size_bytes = current_cache_size_bytes;
+        session_state.cache_size_bytes = actual_cache_memory;
         session_state.entry_count = current_kv_entries.len();
         
         let mut result = CacheProcessingResult {
@@ -200,7 +204,7 @@ impl KVCacheManager {
             };
             
             // Release the mutable borrow before calling clear_cache
-            drop(session_state);
+            let _ = session_state;
             
             let clear_result = self.clear_cache(session_id, current_kv_entries, clear_reason).await?;
             result.should_clear_cache = true;
@@ -239,6 +243,11 @@ impl KVCacheManager {
         // Update database metadata
         if let Some(state) = self.session_state.get(session_id) {
             self.update_session_metadata(session_id, state).await?;
+            
+            // Generate embeddings for preserved KV entries if enabled
+            if self.config.generate_cache_embeddings && !current_kv_entries.is_empty() {
+                self.generate_and_store_kv_embeddings(session_id, current_kv_entries).await?;
+            }
         }
         
         Ok(result)
@@ -252,11 +261,34 @@ impl KVCacheManager {
     /// Check if cache needs to be cleared based on memory usage
     pub fn should_clear_by_memory(&self, current_usage_bytes: usize, max_memory_bytes: usize) -> bool {
         if max_memory_bytes == 0 {
-            return false;
+            // If no max is set, use the configuration default
+            let max_memory = self.estimate_max_cache_memory();
+            let usage_percent = current_usage_bytes as f32 / max_memory as f32;
+            return usage_percent >= self.config.memory_threshold_percent;
         }
         
         let usage_percent = current_usage_bytes as f32 / max_memory_bytes as f32;
         usage_percent >= self.config.memory_threshold_percent
+    }
+    
+    /// Estimate maximum cache memory based on system resources
+    fn estimate_max_cache_memory(&self) -> usize {
+        // Default to 1GB if we can't determine system memory
+        let default_max = 1024 * 1024 * 1024; // 1GB in bytes
+        
+        // In a real implementation, we would query system memory
+        // For now, use the configuration value or default
+        if self.config.max_cache_entries > 0 {
+            // Estimate based on typical KV entry size
+            self.config.max_cache_entries * 1024 // Assuming ~1KB per entry
+        } else {
+            default_max
+        }
+    }
+    
+    /// Calculate the actual memory usage of current cache entries
+    pub fn calculate_cache_memory_usage(&self, entries: &[KVEntry]) -> usize {
+        entries.iter().map(|entry| entry.size_bytes).sum()
     }
     
     /// Check if we should retrieve context for current messages
@@ -388,6 +420,10 @@ impl KVCacheManager {
                     importance_score: entry.importance_score,
                     access_count: entry.access_count,
                     last_accessed: Utc::now(),
+                    token_positions: None,
+                    embedding: None,
+                    size_bytes: entry.value_data.len(),
+                    is_persistent: true,
                 }
             })
             .collect();
@@ -574,7 +610,7 @@ impl KVCacheManager {
         // Search messages by keywords
         let messages = self.database.conversations.search_messages_by_keywords(
             session_id,
-            &keywords,
+            keywords,
             20,
         ).await?;
         
@@ -592,6 +628,10 @@ impl KVCacheManager {
                 importance_score: message.importance_score,
                 access_count: 1,
                 last_accessed: message.timestamp,
+                token_positions: None,
+                embedding: None,
+                size_bytes: message.content.len(),
+                is_persistent: false,
             };
             
             let similarity = self.calculate_keyword_similarity(&entry, keywords);
@@ -691,6 +731,65 @@ impl KVCacheManager {
         self.database.update_kv_cache_metadata(session_id, state).await
     }
     
+    /// Generate and store embeddings for KV cache entries
+    async fn generate_and_store_kv_embeddings(
+        &self,
+        session_id: &str,
+        kv_entries: &[KVEntry],
+    ) -> anyhow::Result<()> {
+        debug!("Generating embeddings for {} KV cache entries", kv_entries.len());
+        
+        // Collect text content from KV entries for embedding
+        let texts: Vec<String> = kv_entries.iter()
+            .filter_map(|entry| {
+                entry.key_data.as_ref()
+                    .and_then(|data| String::from_utf8(data.clone()).ok())
+                    .or_else(|| String::from_utf8(entry.value_data.clone()).ok())
+            })
+            .filter(|text| !text.is_empty())
+            .collect();
+        
+        if texts.is_empty() {
+            debug!("No text content found in KV entries for embedding");
+            return Ok(());
+        }
+        
+        // Generate embeddings using the LLM worker
+        if let Some(llm_worker) = self.get_llm_worker() {
+            match llm_worker.generate_embeddings(texts).await {
+                Ok(embeddings) => {
+                    debug!("Generated {} embeddings for KV cache entries", embeddings.len());
+                    
+                    // Store embeddings in the database with references to the KV entries
+                    for (i, embedding) in embeddings.iter().enumerate() {
+                        if i < kv_entries.len() {
+                            // Store the embedding for this KV entry
+                            let entry_hash = &kv_entries[i].key_hash;
+                            // Note: This would require adding a method to store KV-specific embeddings
+                            // For now, we'll log the operation
+                            debug!("Would store embedding for KV entry: {}", entry_hash);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to generate embeddings for KV cache: {}", e);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Get reference to LLM worker for embedding generation
+    fn get_llm_worker(&self) -> Option<&crate::worker_threads::LLMWorker> {
+        self.llm_worker.as_ref().map(|worker| worker.as_ref())
+    }
+    
+    /// Set the LLM worker reference
+    pub fn set_llm_worker(&mut self, llm_worker: Arc<crate::worker_threads::LLMWorker>) {
+        self.llm_worker = Some(llm_worker);
+    }
+    
     /// Get cache statistics
     pub fn get_statistics(&self) -> &CacheStatistics {
         &self.statistics
@@ -757,7 +856,7 @@ impl KVCacheManager {
         let cutoff = Utc::now() - chrono::Duration::hours(24);
         let sessions_to_clean: Vec<String> = self.session_state.iter()
             .filter(|(_, state)| {
-                state.last_cleared_at.map_or(true, |dt| dt < cutoff)
+                state.last_cleared_at.is_none_or(|dt| dt < cutoff)
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -815,6 +914,33 @@ impl KVCacheManager {
         self.config = config;
     }
     
+    /// Flush current cache state to database for persistence
+    pub async fn flush_to_database(&self, session_id: &str, current_entries: &[KVEntry]) -> anyhow::Result<Option<i64>> {
+        if current_entries.is_empty() {
+            debug!("No entries to flush for session: {}", session_id);
+            return Ok(None);
+        }
+
+        debug!("Flushing {} cache entries to database for session: {}", current_entries.len(), session_id);
+
+        // Create a snapshot of current entries
+        let snapshot_id = self.database.create_kv_snapshot(session_id, current_entries).await?;
+        
+        // Update session metadata
+        if let Some(state) = self.session_state.get(session_id) {
+            let mut updated_state = state.clone();
+            updated_state.entry_count = current_entries.len();
+            updated_state.last_snapshot_id = Some(snapshot_id);
+            
+            self.update_session_metadata(session_id, &updated_state).await?;
+        }
+
+        info!("Flushed {} entries to database snapshot {} for session {}", 
+              current_entries.len(), snapshot_id, session_id);
+
+        Ok(Some(snapshot_id))
+    }
+    
     /// Get cache scorer reference
     pub fn cache_scorer(&self) -> &CacheEntryScorer {
         &self.cache_scorer
@@ -829,21 +955,35 @@ impl KVCacheManager {
     pub fn reset_statistics(&mut self) {
         self.statistics = CacheStatistics::new();
     }
+    
+    /// Shutdown method to flush all pending cache data to database
+    pub async fn shutdown_flush(&self) -> anyhow::Result<()> {
+        info!("Starting KV cache manager shutdown flush...");
+
+        // Get all current session states
+        let all_states = self.get_all_session_states().clone();
+        
+        for (session_id, state) in all_states {
+            info!("Flushing cache data for session: {} (entries: {}, size: {} bytes)", 
+                  session_id, state.entry_count, state.cache_size_bytes);
+            
+            // Note: In a real implementation, we would flush the actual cache entries
+            // that are held somewhere in the application. Since the KVCacheManager
+            // doesn't hold the actual entries in its state, we just ensure the 
+            // metadata is saved to the database.
+            self.update_session_metadata(&session_id, &state).await?;
+        }
+        
+        info!("KV cache manager shutdown flush completed");
+        Ok(())
+    }
 }
 
 impl CacheStatistics {
     pub fn new() -> Self {
-        Self {
-            total_clears: 0,
-            total_retrievals: 0,
-            entries_preserved: 0,
-            entries_cleared: 0,
-            entries_retrieved: 0,
-            last_operation: None,
-            operation_history: Vec::new(),
-        }
+        Self::default()
     }
-    
+
     pub fn record_clear(
         &mut self,
         total_entries: usize,
@@ -928,15 +1068,9 @@ impl CacheStatistics {
 
 impl RetrievalResult {
     pub fn new() -> Self {
-        Self {
-            retrieved_entries: Vec::new(),
-            bridge_message: None,
-            search_duration_ms: 0,
-            keywords_used: Vec::new(),
-            tiers_searched: Vec::new(),
-        }
+        Self::default()
     }
-    
+
     pub fn total_entries(&self) -> usize {
         self.retrieved_entries.len()
     }

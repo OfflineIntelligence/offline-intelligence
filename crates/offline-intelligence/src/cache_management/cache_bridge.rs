@@ -1,13 +1,10 @@
 //! Creates smooth transitions between cached and retrieved content
-
-use crate::memory::Message;
-use crate::utils::topic_extractor::TopicExtractor; // You'll need to ensure this exists
 use tracing::debug;
 
 /// Creates bridging sentences for smooth cache context transitions
 pub struct CacheContextBridge {
     cache_history: Vec<CacheTransition>,
-    max_history: usize,
+    _max_history: usize, // Reserved for future adaptive history sizing
     // Memory limits to prevent unbounded growth
     max_transition_history: usize,
 }
@@ -42,7 +39,7 @@ impl CacheContextBridge {
     pub fn new(max_history: usize) -> Self {
         Self {
             cache_history: Vec::new(),
-            max_history,
+            _max_history: max_history,
             max_transition_history: 50,
         }
     }

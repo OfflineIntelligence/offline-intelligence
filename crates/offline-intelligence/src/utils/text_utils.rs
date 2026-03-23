@@ -13,7 +13,7 @@ pub struct TextUtils;
 
 impl TextUtils {
     /// Check if text contains pattern (case-insensitive) without allocation
-    pub fn contains_ignore_case<'a>(text: &'a str, pattern: &str) -> bool {
+    pub fn contains_ignore_case(text: &str, pattern: &str) -> bool {
         if pattern.len() > text.len() {
             return false;
         }
@@ -93,11 +93,8 @@ impl TextUtils {
         }
         
         // Quick ASCII-only check for common stop words
-        match word.to_lowercase().as_str() {
-            "the" | "a" | "an" | "and" | "or" | "but" | "in" | "on" | "at" | "to" | "for" |
+        !matches!(word.to_lowercase().as_str(), "the" | "a" | "an" | "and" | "or" | "but" | "in" | "on" | "at" | "to" | "for" |
             "of" | "with" | "by" | "is" | "am" | "are" | "was" | "were" | "be" | "been" |
-            "being" | "have" | "has" | "had" | "do" | "does" | "did" => false,
-            _ => true,
-        }
+            "being" | "have" | "has" | "had" | "do" | "does" | "did")
     }
 }

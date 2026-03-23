@@ -5,7 +5,7 @@ use crate::memory_db::{MemoryDatabase, StoredMessage, Summary as DbSummary, Sess
 use moka::sync::Cache;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Configuration for tier management
 #[derive(Debug, Clone)]
@@ -258,16 +258,20 @@ impl TierManager {
         count as usize
     }
 
+    /// Chat persistence: Ensure session exists in database with provided ID (no auto-generated placeholders)
     pub async fn ensure_session_exists(
         &self, 
         session_id: &str, 
         title: Option<String>
     ) -> anyhow::Result<()> {
-        if self.database.conversations.get_session(session_id)?.is_none() {
-            let mut metadata = SessionMetadata::default();
-            metadata.title = title.or_else(|| Some(format!("Session {}", session_id)));
-            // Create session with the specific session_id
-            self.database.conversations.create_session_with_id(Some(session_id.to_string()), Some(metadata))?;
+        let exists = self.database.conversations.get_session(session_id)?;
+        if exists.is_none() {
+            // Create session with null title initially - title set via API after generation
+            let metadata = SessionMetadata {
+                title, // None initially; title updated later via update_conversation_title API
+                ..Default::default()
+            };
+            self.database.conversations.create_session_with_id(session_id, Some(metadata))?;
         }
         Ok(())
     }

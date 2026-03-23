@@ -1,7 +1,0 @@
-# Ignore database files to prevent Tauri dev watcher restarts
-**/*.db
-**/*.db-*
-**/*.db-shm
-**/*.db-wal
-data/**
-target/**

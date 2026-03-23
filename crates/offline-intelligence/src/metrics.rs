@@ -1,92 +1,86 @@
 // _Aud.CLI/_Server/metrics.rs
+// Lock-free metrics using atomic operations and OnceCell
 
-use prometheus::{Encoder, TextEncoder, Registry, IntCounterVec, IntGauge, Histogram, HistogramVec};
+use prometheus::{Encoder, TextEncoder, Registry, IntCounterVec, IntGauge, Histogram};
 use lazy_static::lazy_static;
-use std::sync::Mutex;
+use std::sync::OnceLock;
 use axum::response::IntoResponse;
 use axum::http::StatusCode;
 
 lazy_static! {
     static ref REGISTRY: Registry = Registry::new();
-    static ref REQ_COUNTER: Mutex<IntCounterVec> = Mutex::new(
+}
+
+static REQ_COUNTER: OnceLock<IntCounterVec> = OnceLock::new();
+static ACTIVE_SESSIONS: OnceLock<IntGauge> = OnceLock::new();
+static QUEUE_DEPTH: OnceLock<IntGauge> = OnceLock::new();
+static QUEUE_WAIT_TIME: OnceLock<Histogram> = OnceLock::new();
+
+pub fn init_metrics() {
+    // Initialize metrics once
+    let req_counter = REQ_COUNTER.get_or_init(|| {
         IntCounterVec::new(
             prometheus::opts!("requests_total", "Total requests per route"),
             &["route", "status"]
         ).unwrap()
-    );
-    static ref ACTIVE_SESSIONS: Mutex<IntGauge> = Mutex::new(
+    });
+    
+    let active_sessions = ACTIVE_SESSIONS.get_or_init(|| {
         IntGauge::new("active_sessions", "Active streaming sessions").unwrap()
-    );
-    static ref QUEUE_DEPTH: Mutex<IntGauge> = Mutex::new(
+    });
+    
+    let queue_depth = QUEUE_DEPTH.get_or_init(|| {
         IntGauge::new("queue_depth", "Number of requests waiting in queue").unwrap()
-    );
-    static ref RESPONSE_TIME: Mutex<HistogramVec> = Mutex::new(
-        HistogramVec::new(
-            prometheus::HistogramOpts::new(
-                "response_time_seconds",
-                "Response time by endpoint"
-            ),
-            &["endpoint"]
-        ).unwrap()
-    );
-    static ref CONTEXT_OPTIMIZATION_TIME: Mutex<Histogram> = Mutex::new(
+    });
+    
+    let queue_wait_time = QUEUE_WAIT_TIME.get_or_init(|| {
         Histogram::with_opts(prometheus::HistogramOpts::new(
-            "context_optimization_time_seconds",
-            "Time spent in context optimization"
+            "queue_wait_time_seconds",
+            "Time spent waiting in queue"
         )).unwrap()
-    );
-    static ref BACKEND_LATENCY: Mutex<Histogram> = Mutex::new(
-        Histogram::with_opts(prometheus::HistogramOpts::new(
-            "backend_latency_seconds",
-            "Latency to backend service"
-        )).unwrap()
-    );
+    });
+
+    REGISTRY.register(Box::new(req_counter.clone())).ok();
+    REGISTRY.register(Box::new(active_sessions.clone())).ok();
+    REGISTRY.register(Box::new(queue_depth.clone())).ok();
+    REGISTRY.register(Box::new(queue_wait_time.clone())).ok();
 }
 
-pub fn init_metrics() {
-    REGISTRY.register(Box::new(REQ_COUNTER.lock().unwrap().clone())).ok();
-    REGISTRY.register(Box::new(ACTIVE_SESSIONS.lock().unwrap().clone())).ok();
-    REGISTRY.register(Box::new(QUEUE_DEPTH.lock().unwrap().clone())).ok();
-    REGISTRY.register(Box::new(RESPONSE_TIME.lock().unwrap().clone())).ok();
-    REGISTRY.register(Box::new(CONTEXT_OPTIMIZATION_TIME.lock().unwrap().clone())).ok();
-    REGISTRY.register(Box::new(BACKEND_LATENCY.lock().unwrap().clone())).ok();
-}
-
-// Add this missing function
+// Lock-free metric operations
 pub fn inc_request(route: &str, status: &str) {
-    REQ_COUNTER.lock().unwrap().with_label_values(&[route, status]).inc();
+    if let Some(counter) = REQ_COUNTER.get() {
+        counter.with_label_values(&[route, status]).inc();
+    }
 }
 
 pub fn inc_sessions() {
-    ACTIVE_SESSIONS.lock().unwrap().inc();
+    if let Some(gauge) = ACTIVE_SESSIONS.get() {
+        gauge.inc();
+    }
 }
 
 pub fn dec_sessions() {
-    ACTIVE_SESSIONS.lock().unwrap().dec();
+    if let Some(gauge) = ACTIVE_SESSIONS.get() {
+        gauge.dec();
+    }
 }
 
 pub fn inc_queue() {
-    QUEUE_DEPTH.lock().unwrap().inc();
+    if let Some(gauge) = QUEUE_DEPTH.get() {
+        gauge.inc();
+    }
 }
 
 pub fn dec_queue() {
-    QUEUE_DEPTH.lock().unwrap().dec();
+    if let Some(gauge) = QUEUE_DEPTH.get() {
+        gauge.dec();
+    }
 }
 
 pub fn observe_queue_wait(duration: f64) {
-    // Placeholder for queue wait time
-}
-
-pub fn observe_response_time(endpoint: &str, duration: f64) {
-    RESPONSE_TIME.lock().unwrap().with_label_values(&[endpoint]).observe(duration);
-}
-
-pub fn observe_context_optimization(duration: f64) {
-    CONTEXT_OPTIMIZATION_TIME.lock().unwrap().observe(duration);
-}
-
-pub fn observe_backend_latency(duration: f64) {
-    BACKEND_LATENCY.lock().unwrap().observe(duration);
+    if let Some(histogram) = QUEUE_WAIT_TIME.get() {
+        histogram.observe(duration);
+    }
 }
 
 pub async fn get_metrics() -> impl IntoResponse {

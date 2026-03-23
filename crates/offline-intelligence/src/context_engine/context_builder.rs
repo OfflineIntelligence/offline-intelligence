@@ -3,7 +3,6 @@
 use crate::memory::Message;
 use crate::memory_db::{StoredMessage, Summary as DbSummary};
 use tracing::{info, debug};
-use std::collections::HashMap;
 
 /// Builds context from multiple memory sources
 pub struct ContextBuilder {
