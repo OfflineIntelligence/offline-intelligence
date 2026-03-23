@@ -1,9 +1,12 @@
 [package]
 name = "offline-intelligence"
 version = "0.1.3"
-description = "OFFLINE INTELLIGENCE"
+description = "High-performance library for offline AI inference with context management, memory, and thread-based server architecture"
 license = "Apache-2.0"
-repository = ""
+repository = "https://github.com/OfflineIntelligence/offline-intelligence"
+homepage = "https://github.com/OfflineIntelligence/offline-intelligence"
+keywords = ["llm", "ai", "inference", "offline", "local"]
+categories = ["web-programming", "science", "network-programming"]
 readme = "README.md"
 edition = "2021"
 
