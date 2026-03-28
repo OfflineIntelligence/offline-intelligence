@@ -126,42 +126,80 @@ pub async fn maintenance(
 ) -> Result<impl IntoResponse, StatusCode> {
     match payload.operation.as_str() {
         "cleanup_expired_sessions" => {
-            // Clear expired/inactive sessions from memory
-            // In a real implementation, we would remove sessions that haven't been accessed recently
+            // Remove sessions from the in-memory DashMap that haven't been accessed
+            // in the last 30 minutes. Database records are kept intact.
+            const EXPIRY_SECS: u64 = 30 * 60;
             let initial_count = shared_state.conversations.sessions.len();
-            
+
+            shared_state.conversations.sessions.retain(|_, session| {
+                session.read()
+                    .map(|data| data.last_accessed.elapsed().as_secs() <= EXPIRY_SECS)
+                    .unwrap_or(true) // keep if lock poisoned
+            });
+
+            let removed = initial_count.saturating_sub(shared_state.conversations.sessions.len());
+            shared_state.counters.active_sessions.fetch_sub(
+                removed.min(shared_state.counters.active_sessions.load(std::sync::atomic::Ordering::Relaxed)),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+
             Ok((
                 StatusCode::OK,
                 Json(serde_json::json!({
                     "message": "Expired sessions cleanup completed",
                     "operation": "cleanup_expired_sessions",
                     "initial_session_count": initial_count,
+                    "removed_count": removed,
                     "status": "completed"
                 })),
             ))
         },
         "optimize_database" => {
-            // In a real implementation, we would perform database optimization
-            // For now, we'll just return a success message
-            Ok((
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "message": "Database optimization completed",
-                    "operation": "optimize_database",
-                    "status": "completed"
-                })),
-            ))
+            // Run PRAGMA optimize + WAL checkpoint to reclaim disk space and
+            // update query planner statistics.
+            match shared_state.database_pool.optimize() {
+                Ok(()) => Ok((
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "message": "Database optimization completed (PRAGMA optimize + WAL checkpoint)",
+                        "operation": "optimize_database",
+                        "status": "completed"
+                    })),
+                )),
+                Err(e) => Ok((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "message": format!("Database optimization failed: {}", e),
+                        "operation": "optimize_database",
+                        "status": "error"
+                    })),
+                )),
+            }
         },
         "clear_inactive_sessions" => {
-            // Clear inactive sessions from memory
+            // More aggressive version: remove sessions idle for more than 5 minutes.
+            const INACTIVE_SECS: u64 = 5 * 60;
             let initial_count = shared_state.conversations.sessions.len();
-            
+
+            shared_state.conversations.sessions.retain(|_, session| {
+                session.read()
+                    .map(|data| data.last_accessed.elapsed().as_secs() <= INACTIVE_SECS)
+                    .unwrap_or(true)
+            });
+
+            let removed = initial_count.saturating_sub(shared_state.conversations.sessions.len());
+            shared_state.counters.active_sessions.fetch_sub(
+                removed.min(shared_state.counters.active_sessions.load(std::sync::atomic::Ordering::Relaxed)),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+
             Ok((
                 StatusCode::OK,
                 Json(serde_json::json!({
                     "message": "Inactive sessions cleared",
                     "operation": "clear_inactive_sessions",
                     "initial_session_count": initial_count,
+                    "removed_count": removed,
                     "status": "completed"
                 })),
             ))

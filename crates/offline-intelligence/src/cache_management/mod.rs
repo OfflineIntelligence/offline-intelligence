@@ -21,10 +21,12 @@ pub use cache_manager::{
 pub use cache_scorer::{CacheEntryScorer, CacheScoringConfig};
 pub use llama_cache_interface::{LlamaKVCacheInterface, LlamaKVCacheState};
 
-/// Create a default KV cache manager
+/// Create a default KV cache manager.
+/// Pass `llm_worker` to enable pre-clear summarization.
 pub fn create_default_cache_manager(
     config: KVCacheConfig,
     database: std::sync::Arc<crate::memory_db::MemoryDatabase>,
+    llm_worker: Option<std::sync::Arc<crate::worker_threads::LLMWorker>>,
 ) -> anyhow::Result<KVCacheManager> {
-    KVCacheManager::new(config, database)
+    KVCacheManager::new(config, database, llm_worker)
 }

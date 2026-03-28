@@ -39,7 +39,7 @@ mod tests {
             },
         };
 
-        let mut cache_manager = KVCacheManager::new(config, database.clone()).unwrap();
+        let mut cache_manager = KVCacheManager::new(config, database.clone(), None).unwrap();
 
         // Simulate multiple conversations
         let session_id = "test_session_1";
@@ -115,7 +115,7 @@ mod tests {
             snapshot_strategy: crate::cache_management::SnapshotStrategy::None,
         };
 
-        let mut cache_manager = KVCacheManager::new(config, database.clone()).unwrap();
+        let mut cache_manager = KVCacheManager::new(config, database.clone(), None).unwrap();
 
         let session_id = "test_session_2";
         
@@ -176,7 +176,7 @@ mod tests {
             snapshot_strategy: crate::cache_management::SnapshotStrategy::Full { interval_conversations: 1 },
         };
 
-        let mut cache_manager = KVCacheManager::new(config, database.clone()).unwrap();
+        let mut cache_manager = KVCacheManager::new(config, database.clone(), None).unwrap();
 
         let session_id = "test_session_3";
         

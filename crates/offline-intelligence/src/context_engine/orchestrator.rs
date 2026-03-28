@@ -40,6 +40,8 @@ pub struct OrchestratorConfig {
     pub enable_smart_retrieval: bool,
     /// Smart retrieval configuration
     pub smart_retrieval_config: SmartRetrievalConfig,
+    /// Model context window size in tokens — 0 means not set (use defaults)
+    pub ctx_size: u32,
 }
 
 impl Default for OrchestratorConfig {
@@ -52,6 +54,22 @@ impl Default for OrchestratorConfig {
             session_timeout_seconds: 3600,
             enable_smart_retrieval: true,  // Enable by default for production
             smart_retrieval_config: SmartRetrievalConfig::default(),
+            ctx_size: 0,
+        }
+    }
+}
+
+impl OrchestratorConfig {
+    /// Derive token limits from the model's context window.
+    /// 75% of CTX_SIZE is the ceiling for the total context sent to the LLM,
+    /// leaving 25% headroom for the model's own generation output.
+    pub fn from_ctx_size(ctx_size: u32) -> Self {
+        let max_context_tokens = (ctx_size as f32 * 0.75) as usize;
+        Self {
+            max_context_tokens,
+            smart_retrieval_config: SmartRetrievalConfig::from_ctx_size(ctx_size),
+            ctx_size,
+            ..Self::default()
         }
     }
 }
@@ -65,16 +83,24 @@ impl ContextOrchestrator {
         // Create retrieval planner wrapped in Arc<RwLock>
         let retrieval_planner = Arc::new(RwLock::new(RetrievalPlanner::new(database.clone())));
         
-        // Create tier manager
-        let tier_manager_config = TierManagerConfig::default();
+        // Create tier manager — derive limits from ctx_size if available
+        let tier_manager_config = if config.ctx_size > 0 {
+            TierManagerConfig::from_ctx_size(config.ctx_size)
+        } else {
+            TierManagerConfig::default()
+        };
         let tier_manager = TierManager::new(
             database.clone(),
             tier_manager_config,
         );
         let tier_manager = Arc::new(RwLock::new(tier_manager));
-        
-        // Create context builder wrapped in Arc<RwLock>
-        let context_builder_config = ContextBuilderConfig::default();
+
+        // Create context builder — derive limits from ctx_size if available
+        let context_builder_config = if config.ctx_size > 0 {
+            ContextBuilderConfig::from_ctx_size(config.ctx_size)
+        } else {
+            ContextBuilderConfig::default()
+        };
         let context_builder = Arc::new(RwLock::new(ContextBuilder::new(context_builder_config)));
         
         // Initialize smart retrieval if enabled
@@ -135,7 +161,24 @@ impl ContextOrchestrator {
             let tier_manager = self.tier_manager.write().await;
             tier_manager.store_tier1_content(session_id, messages).await;
         }
-        
+
+        // Check if conversation is approaching the context window limit.
+        // At 60% of max_context_tokens, fire off a background summarization task —
+        // non-blocking so the current request returns immediately. The updated summary
+        // will be prepended on the *next* turn, not this one.
+        let estimated_tokens: usize = messages.iter().map(|m| m.content.len() / 4).sum();
+        let summary_threshold = (self.config.max_context_tokens as f32 * 0.60) as usize;
+        if estimated_tokens >= summary_threshold {
+            if let Some(worker) = self.llm_worker.clone() {
+                let db = Arc::clone(&self.database);
+                let sid = session_id.to_string();
+                let msgs = messages.to_vec();
+                tokio::spawn(async move {
+                    generate_and_store_summary(&db, &worker, &sid, &msgs).await;
+                });
+            }
+        }
+
         // Save ONLY the last user message (new query) to database
         if let Some(last_message) = messages.last() {
             if last_message.role == "user" {
@@ -184,7 +227,6 @@ impl ContextOrchestrator {
             match smart_retrieval.retrieve(
                 session_id,
                 messages,
-                retrieved_content.tier2.clone(),
                 retrieved_content.tier3.clone(),
                 retrieved_content.cross_session.clone(),
             ).await {
@@ -199,12 +241,10 @@ impl ContextOrchestrator {
                 }
                 Err(e) => {
                     warn!("Smart retrieval failed, falling back to standard: {}", e);
-                    // Fallback to standard context building
                     let mut context_builder = self.context_builder.write().await;
                     context_builder.build_context(
                         messages,
                         retrieved_content.tier1,
-                        retrieved_content.tier2,
                         retrieved_content.tier3,
                         retrieved_content.cross_session,
                         user_query,
@@ -217,31 +257,68 @@ impl ContextOrchestrator {
             context_builder.build_context(
                 messages,
                 retrieved_content.tier1,
-                retrieved_content.tier2,
                 retrieved_content.tier3,
                 retrieved_content.cross_session,
                 user_query,
             ).await?
         };
         
+        // If a cumulative summary exists for this session (generated at a prior threshold
+        // crossing), prepend it so the LLM always has full history context — not just
+        // the recent window. This is the re-feed path after a context compression event.
+        let mut final_context = self.prepend_session_summary(session_id, optimized_context).await;
+
         // If we used retrieval, update statistics
         if let Some(query) = user_query {
-            if let Some(response) = optimized_context.last() {
+            if let Some(response) = final_context.last() {
                 if response.role == "assistant" {
                     self.update_engagement(query, &response.content).await;
                 }
             }
         }
-        
+
         info!(
             "Context optimization complete: {} -> {} messages",
             messages.len(),
-            optimized_context.len()
+            final_context.len()
         );
-        
-        Ok(optimized_context)
+
+        Ok(final_context)
     }
     
+    /// Prepend the stored cumulative summary as the first system message in the context,
+
+    /// Prepend the stored cumulative summary as the first system message in the context,
+    /// so the LLM has full history even after the active window was trimmed.
+    /// Returns the context unchanged if no summary exists for this session.
+    async fn prepend_session_summary(
+        &self,
+        session_id: &str,
+        mut context: Vec<Message>,
+    ) -> Vec<Message> {
+        match self.database.session_summaries.get(session_id) {
+            Ok(Some(summary)) => {
+                debug!(
+                    "Prepending cumulative summary for session {} (clear #{}, {} tokens)",
+                    session_id, summary.clear_count, summary.token_count
+                );
+                context.insert(0, Message {
+                    role: "system".to_string(),
+                    content: format!(
+                        "[Conversation history summary — covers everything before this window:]\n{}",
+                        summary.summary_text
+                    ),
+                });
+                context
+            }
+            Ok(None) => context,
+            Err(e) => {
+                debug!("Could not fetch summary for session {}: {}", session_id, e);
+                context
+            }
+        }
+    }
+
     /// Save assistant response to database (Tier 3)
     pub async fn save_assistant_response(
         &self,
@@ -272,12 +349,6 @@ impl ContextOrchestrator {
         if plan.use_tier1 {
             let tier_manager = self.tier_manager.read().await;
             retrieved.tier1 = tier_manager.get_tier1_content(session_id).await;
-        }
-
-        // Retrieve from Tier 2 (summaries)
-        if plan.use_tier2 {
-            let tier_manager = self.tier_manager.read().await;
-            retrieved.tier2 = tier_manager.get_tier2_content(session_id).await;
         }
 
         // ── Semantic Search: KV cache miss path ──
@@ -481,6 +552,68 @@ impl ContextOrchestrator {
     }
 }
 
+/// Free function — runs in a background `tokio::spawn` task so it never blocks a request.
+/// Generates or updates the single cumulative session summary and persists it to SQLite.
+async fn generate_and_store_summary(
+    database: &Arc<crate::memory_db::MemoryDatabase>,
+    llm_worker: &Arc<LLMWorker>,
+    session_id: &str,
+    messages: &[Message],
+) {
+    if messages.len() < 4 {
+        return;
+    }
+
+    let existing = database.session_summaries.get(session_id).unwrap_or(None);
+
+    let system_content = match &existing {
+        Some(prev) => format!(
+            "You are a concise summarizer. You have a running summary of a conversation \
+             and new messages that occurred since that summary. Produce ONE updated summary \
+             covering EVERYTHING — the prior summary and the new messages combined. \
+             Target under 400 tokens. Include key facts, decisions, code, numbers, names. \
+             No commentary.\n\nPRIOR SUMMARY:\n{}",
+            prev.summary_text
+        ),
+        None => "You are a concise summarizer. Summarize the following conversation \
+                 into key facts, decisions, code snippets, and figures. \
+                 Target under 300 tokens. No commentary.".to_string(),
+    };
+
+    let mut context: Vec<Message> = vec![Message {
+        role: "system".to_string(),
+        content: system_content,
+    }];
+
+    let tail = if messages.len() > 40 { &messages[messages.len() - 40..] } else { messages };
+    context.extend_from_slice(tail);
+
+    let user_prompt = if existing.is_some() {
+        "Produce the updated cumulative summary now, covering both the prior summary and these new messages."
+    } else {
+        "Summarize the conversation above."
+    };
+    context.push(Message { role: "user".to_string(), content: user_prompt.to_string() });
+
+    match llm_worker.generate_response(session_id.to_string(), context).await {
+        Ok(summary) if !summary.trim().is_empty() => {
+            let token_estimate = (summary.len() / 4) as i32;
+            let clear_num = existing.as_ref().map(|s| s.clear_count + 1).unwrap_or(1);
+            match database.session_summaries.upsert(
+                session_id, &summary, token_estimate, messages.len() as i32,
+            ) {
+                Ok(_) => info!(
+                    "Background: updated cumulative summary #{} for session {} ({} tokens)",
+                    clear_num, session_id, token_estimate
+                ),
+                Err(e) => info!("Background: could not persist summary for {}: {}", session_id, e),
+            }
+        }
+        Ok(_) => debug!("Background: summary was empty for session {}", session_id),
+        Err(e) => debug!("Background: summary skipped for {}: {}", session_id, e),
+    }
+}
+
 impl Clone for ContextOrchestrator {
     fn clone(&self) -> Self {
         Self {
@@ -498,7 +631,6 @@ impl Clone for ContextOrchestrator {
 #[derive(Debug, Default)]
 struct RetrievedContent {
     tier1: Option<Vec<Message>>,
-    tier2: Option<Vec<crate::memory_db::Summary>>,
     tier3: Option<Vec<crate::memory_db::StoredMessage>>,
     cross_session: Option<Vec<crate::memory_db::StoredMessage>>,
 }

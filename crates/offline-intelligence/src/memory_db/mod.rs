@@ -4,25 +4,25 @@
 pub mod schema;
 pub mod migration;
 pub mod conversation_store;
-pub mod summary_store;
 pub mod embedding_store;
 pub mod local_files_store;
 pub mod all_files_store;
 pub mod api_keys_store;
 pub mod users_store;
 pub mod session_file_contexts_store;
+pub mod session_summaries_store;
 
 // Re-export commonly used types
 pub use schema::*;
 pub use migration::MigrationManager;
 pub use conversation_store::ConversationStore;
-pub use summary_store::SummaryStore;
 pub use embedding_store::{EmbeddingStore, EmbeddingStats};
 pub use local_files_store::{LocalFilesStore, LocalFile, LocalFileTree};
 pub use all_files_store::{AllFilesStore, AllFile, AllFileTree};
 pub use api_keys_store::{ApiKeysStore, ApiKeyType, ApiKeyRecord, Encryption};
 pub use users_store::{UsersStore, User};
 pub use session_file_contexts_store::{SessionFileContextsStore, SessionFileContext, AttachmentRef};
+pub use session_summaries_store::SessionSummariesStore;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -35,13 +35,13 @@ use crate::cache_management::cache_manager::SessionCacheState;
 /// Main database manager that coordinates all stores
 pub struct MemoryDatabase {
     pub conversations: ConversationStore,
-    pub summaries: SummaryStore,
     pub embeddings: EmbeddingStore,
     pub local_files: LocalFilesStore,
     pub all_files: AllFilesStore,
     pub api_keys: ApiKeysStore,
     pub users: UsersStore,
     pub session_file_contexts: SessionFileContextsStore,
+    pub session_summaries: SessionSummariesStore,
     pool: Arc<Pool<SqliteConnectionManager>>,
 }
 
@@ -87,7 +87,7 @@ impl MemoryDatabase {
             );
 
         let pool = Pool::builder()
-            .max_size(10)
+            .max_size(20)  // 20 connections: enough for concurrent reads under load; WAL allows parallel readers
             .build(manager)
             .map_err(|e| anyhow::anyhow!("Failed to create connection pool: {}", e))?;
 
@@ -131,13 +131,13 @@ impl MemoryDatabase {
 
         Ok(Self {
             conversations: ConversationStore::new(Arc::clone(&pool)),
-            summaries: SummaryStore::new(Arc::clone(&pool)),
             embeddings: EmbeddingStore::new(Arc::clone(&pool)),
             local_files: LocalFilesStore::new(Arc::clone(&pool), app_data_dir.clone()),
             all_files: AllFilesStore::new(Arc::clone(&pool), all_files_dir),
             api_keys,
             users,
             session_file_contexts: SessionFileContextsStore::new(Arc::clone(&pool)),
+            session_summaries: SessionSummariesStore::new(Arc::clone(&pool)),
             pool,
         })
     }
@@ -146,7 +146,7 @@ impl MemoryDatabase {
     pub fn new_in_memory() -> anyhow::Result<Self> {
         let manager = SqliteConnectionManager::memory();
         let pool = Pool::builder()
-            .max_size(5)
+            .max_size(10)  // In-memory: 10 connections sufficient for test workloads
             .build(manager)?;
 
         {
@@ -178,13 +178,13 @@ impl MemoryDatabase {
 
         Ok(Self {
             conversations: ConversationStore::new(Arc::clone(&pool)),
-            summaries: SummaryStore::new(Arc::clone(&pool)),
             embeddings: EmbeddingStore::new(Arc::clone(&pool)),
             local_files: LocalFilesStore::new(Arc::clone(&pool), app_data_dir.clone()),
             all_files: AllFilesStore::new(Arc::clone(&pool), all_files_dir),
             api_keys,
             users,
             session_file_contexts: SessionFileContextsStore::new(Arc::clone(&pool)),
+            session_summaries: SessionSummariesStore::new(Arc::clone(&pool)),
             pool,
         })
     }
@@ -526,6 +526,21 @@ impl MemoryDatabase {
         let deleted = stmt.execute(rusqlite::params_from_iter(&ids_to_delete))?;
         
         Ok(deleted)
+    }
+
+    /// Run SQLite maintenance: update query planner statistics and truncate the WAL file.
+    ///
+    /// `PRAGMA optimize` lets SQLite decide when to run `ANALYZE` — safe to call at any time.
+    /// `PRAGMA wal_checkpoint(TRUNCATE)` flushes the WAL to the main DB file and resets
+    /// the WAL to zero bytes, reclaiming disk space after heavy write sessions.
+    pub fn optimize(&self) -> anyhow::Result<()> {
+        let conn = self.pool.get()?;
+        conn.execute_batch(
+            "PRAGMA optimize;
+             PRAGMA wal_checkpoint(TRUNCATE);"
+        )?;
+        tracing::info!("SQLite optimize + WAL checkpoint completed");
+        Ok(())
     }
 }
 

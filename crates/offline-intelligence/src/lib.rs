@@ -34,10 +34,11 @@ use memory_db::MemoryDatabase;
 
 async fn init_cache_manager(
     memory_database: Arc<MemoryDatabase>,
+    ctx_size: u32,
 ) -> anyhow::Result<Option<Arc<cache_management::KVCacheManager>>> {
-    let cache_config = cache_management::KVCacheConfig::default();
+    let cache_config = cache_management::KVCacheConfig::from_ctx_size(ctx_size);
     
-    match KVCacheManager::new(cache_config, memory_database) {
+    match KVCacheManager::new(cache_config, memory_database, None) {
         Ok(manager) => {
             info!("Cache manager initialized successfully");
             Ok(Some(Arc::new(manager)))

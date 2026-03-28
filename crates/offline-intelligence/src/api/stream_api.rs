@@ -23,6 +23,7 @@ use crate::memory::Message;
 use crate::memory_db::schema::Embedding;
 use crate::shared_state::UnifiedAppState;
 use crate::utils::{extract_content_from_bytes, estimate_tokens, truncate_to_budget, is_extraction_sentinel};
+use crate::cache_management::cache_scorer::score_message_importance;
 use regex::Regex;
 
 lazy_static::lazy_static! {
@@ -619,7 +620,7 @@ pub async fn generate_stream(
         tokio::spawn(async move {
             if let Err(e) = db.conversations.store_messages_batch(
                 &sid,
-                &[("user".to_string(), content, msg_count - 1, 0, 0.5)],
+                &[("user".to_string(), content.clone(), msg_count - 1, 0, score_message_importance("user", &content))],
             ) {
                 error!("Failed to persist user message: {}", e);
             }
@@ -741,9 +742,10 @@ pub async fn generate_stream(
                     
                     // Persist assistant response to database after stream completes
                     if !full_response.is_empty() {
+                        let importance = score_message_importance("assistant", &full_response);
                         match db_for_persist.conversations.store_messages_batch(
                             &session_id_for_persist,
-                            &[("assistant".to_string(), full_response.clone(), msg_index, 0, 0.5)],
+                            &[("assistant".to_string(), full_response.clone(), msg_index, 0, importance)],
                         ) {
                             Ok(stored_msgs) => {
                                 debug!("Persisted assistant response ({} chars) for session {}",
@@ -755,7 +757,7 @@ pub async fn generate_stream(
                         }
                     }
                 };
-                
+
                 Sse::new(output_stream)
                     .keep_alive(
                         axum::response::sse::KeepAlive::new()
@@ -826,9 +828,10 @@ pub async fn generate_stream(
 
                     // Persist assistant response to database after stream completes
                     if !full_response.is_empty() {
+                        let importance = score_message_importance("assistant", &full_response);
                         match db_for_persist.conversations.store_messages_batch(
                             &session_id_for_persist,
-                            &[("assistant".to_string(), full_response.clone(), msg_index, 0, 0.5)],
+                            &[("assistant".to_string(), full_response.clone(), msg_index, 0, importance)],
                         ) {
                             Ok(_stored_msgs) => {
                                 debug!("Persisted assistant response ({} chars) for session {}",

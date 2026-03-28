@@ -6,19 +6,22 @@ High-performance Rust library for offline AI inference with context management, 
 
 - Thread-based async server (`run_thread_server`)
 - Three-tier memory: hot Moka cache → SQLite summaries → full persistence
-- KV cache management with snapshot/restore
-- HNSW ANN indexing for semantic similarity
+- KV cache management: real llama-server `/slots` API integration, token-bucket entries, snapshot/restore
+- HNSW ANN indexing with lazy dirty-flag rebuild (no per-insert rebuild cost)
+- Content-aware message importance scoring (role + content bonuses, replaces hardcoded 0.5)
+- Dynamic KV memory limits via `sysinfo` (25% of available RAM, 256 MB–8 GB)
 - Multi-format model support: `.gguf`, `.onnx`, `.trt`, `.safetensors`, `.ggml`, `.mlmodel`
 - Platform-aware GPU detection: Apple Silicon Metal, NVIDIA (optional `nvidia` feature), CPU fallback
 - OpenRouter API key support + local llama-server backend
 - Prometheus metrics, JWT auth, Argon2 password hashing
 - PDF/OCR extraction: lopdf (text), macOS Vision, Windows WinRT
+- Operational admin endpoints: session cleanup, SQLite optimize + WAL checkpoint
 
 ## Quick Start
 
 ```toml
 [dependencies]
-offline-intelligence = "0.1.3"
+offline-intelligence = "0.1.4"
 ```
 
 ```rust

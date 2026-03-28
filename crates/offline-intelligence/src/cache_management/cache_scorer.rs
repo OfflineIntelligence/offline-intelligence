@@ -265,6 +265,50 @@ impl CacheEntryScorer {
     }
 }
 
+/// Score the importance of a conversation message based on its role and content.
+///
+/// Returns a value in [0.1, 0.95]. Used when persisting messages to SQLite so that
+/// retrieval strategies (ImportanceFiltered, hybrid ranking) have meaningful scores
+/// to work with rather than a flat 0.5 for everything.
+pub fn score_message_importance(role: &str, content: &str) -> f32 {
+    // Role base: system prompts are always high-value anchors; assistant responses
+    // carry more information density than user turns on average.
+    let role_base: f32 = match role {
+        "system" => 0.9,
+        "assistant" => 0.6,
+        _ => 0.4, // user (and any other role)
+    };
+
+    // Content bonus: scan for signals that indicate a high-information message.
+    let mut content_bonus: f32 = 0.0;
+
+    // Code blocks are almost always important context to preserve.
+    if content.contains("```") {
+        content_bonus += 0.2;
+    }
+
+    // Pattern-based signals using the same regexes the KV cache scorer uses for keys.
+    for (pattern_name, regex) in KEY_PATTERNS.iter() {
+        if regex.is_match(content) {
+            content_bonus += match *pattern_name {
+                "important_concept" => 0.15,
+                "code_related" => 0.10,
+                "system_prompt" => 0.10,
+                "question" => 0.05,
+                "numeric" => 0.04,
+                _ => 0.02,
+            };
+        }
+    }
+    // Cap so a single very rich message doesn't dominate everything else.
+    let content_bonus = content_bonus.min(0.35);
+
+    // Length bonus: longer messages carry more information (log-like saturation at ~3000 chars).
+    let length_bonus = ((content.len() as f32) / 3000.0).min(0.1);
+
+    (role_base + content_bonus + length_bonus).clamp(0.1, 0.95)
+}
+
 /// Implementation of the trait required by the cache_extractor module
 impl crate::cache_management::cache_extractor::CacheEntryScorer for CacheEntryScorer {
     fn extract_keywords(&self, key_data: Option<&[u8]>) -> Vec<String> {

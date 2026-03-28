@@ -153,10 +153,10 @@ pub async fn memory_optimize(
         }
     }
 
-    // 2. Process
-    let mut orchestrator_guard = shared_state.context_orchestrator.write().await;
+    // 2. Process — read lock: process_conversation takes &self, no exclusive access needed
+    let orchestrator_guard = shared_state.context_orchestrator.read().await;
 
-    if let Some(orchestrator) = &mut *orchestrator_guard {
+    if let Some(orchestrator) = &*orchestrator_guard {
         match orchestrator
             .process_conversation(
                 &payload.session_id,
@@ -219,20 +219,18 @@ pub async fn memory_stats(
         match orchestrator.get_session_stats(&session_id).await {
             Ok(session_stats) => {
                 let stats = SessionStats {
-                    total_messages: session_stats.tier_stats.tier1_count + 
-                                   session_stats.tier_stats.tier2_count + 
+                    total_messages: session_stats.tier_stats.tier1_count +
                                    session_stats.tier_stats.tier3_count,
                     optimized_messages: session_stats.tier_stats.tier1_count,
                     compression_ratio: if session_stats.tier_stats.tier1_count > 0 {
-                        (session_stats.tier_stats.tier2_count as f32 + session_stats.tier_stats.tier3_count as f32) 
-                        / session_stats.tier_stats.tier1_count as f32
+                        session_stats.tier_stats.tier3_count as f32
+                            / session_stats.tier_stats.tier1_count as f32
                     } else {
                         0.0
                     },
-                    last_accessed: None, // Not available in current TierStats
-                    memory_size_bytes: Some((session_stats.tier_stats.tier1_count + 
-                                           session_stats.tier_stats.tier2_count + 
-                                           session_stats.tier_stats.tier3_count) * 1024), // Estimate 1KB per message
+                    last_accessed: None,
+                    memory_size_bytes: Some((session_stats.tier_stats.tier1_count +
+                                           session_stats.tier_stats.tier3_count) * 1024),
                 };
         
                 metrics::inc_request("memory_stats", "ok");

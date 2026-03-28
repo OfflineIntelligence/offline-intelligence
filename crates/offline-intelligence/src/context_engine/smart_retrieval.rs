@@ -1,16 +1,14 @@
-//! Smart retrieval with hierarchical context optimization
+//! Smart retrieval with two-tier context optimization
 //!
 //! This module implements intelligent retrieval that minimizes recomputation cost
-//! by preferring summaries over raw messages and enforcing strict token budgets.
+//! by enforcing strict token budgets and importance filtering.
 //!
 //! Key optimizations:
-//! - Tier 1 (hot cache) → O(1) return
-//! - Tier 2 (summaries) → Compressed context (50 tokens vs 2000)
-//! - Tier 3 (database) → Importance-filtered, token-budgeted
-//! - Hierarchical assembly → Summary first, details on-demand
+//! - Tier 1 (hot cache) → O(1) return, 100% compute savings
+//! - Tier 3 (cold storage) → Importance-filtered, token-budgeted SQLite retrieval
 
 use crate::memory::Message;
-use crate::memory_db::{StoredMessage, Summary as DbSummary};
+use crate::memory_db::StoredMessage;
 use crate::context_engine::tier_manager::TierManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -22,17 +20,11 @@ pub struct SmartRetrievalConfig {
     /// Maximum tokens for retrieved historical context (excludes current messages)
     pub max_retrieved_tokens: usize,
 
-    /// Prefer summaries over raw messages when available
-    pub prefer_summaries: bool,
-
     /// Minimum importance score to include a message (0.0-1.0)
     pub importance_threshold: f32,
 
     /// Group contiguous messages into chunks for better llama.cpp caching
     pub chunk_contiguous_messages: bool,
-
-    /// Use hierarchical context (summary first, then details)
-    pub use_hierarchical_context: bool,
 
     /// Enable smart retrieval (can be disabled to fall back to original behavior)
     pub enabled: bool,
@@ -41,12 +33,22 @@ pub struct SmartRetrievalConfig {
 impl Default for SmartRetrievalConfig {
     fn default() -> Self {
         Self {
-            max_retrieved_tokens: 1000,  // Budget for old context
-            prefer_summaries: true,       // Always prefer compressed context
-            importance_threshold: 0.5,    // Only retrieve important messages
+            max_retrieved_tokens: 1000,
+            importance_threshold: 0.5,
             chunk_contiguous_messages: true,
-            use_hierarchical_context: true,
             enabled: true,
+        }
+    }
+}
+
+impl SmartRetrievalConfig {
+    /// Derive the historical retrieval budget from the model's context window.
+    /// 25% of CTX_SIZE is allocated to retrieved history (summaries + cold SQLite),
+    /// ensuring the current conversation always gets the lion's share.
+    pub fn from_ctx_size(ctx_size: u32) -> Self {
+        Self {
+            max_retrieved_tokens: (ctx_size as f32 * 0.25) as usize,
+            ..Self::default()
         }
     }
 }
@@ -75,9 +77,6 @@ pub struct RetrievalResult {
 pub enum RetrievalStrategy {
     /// Current session already in Tier 1 hot cache
     HotCacheHit,
-
-    /// Used summaries to compress old context
-    SummaryCompression,
 
     /// Retrieved chunks with importance filtering
     ImportanceFiltered,
@@ -109,7 +108,6 @@ impl SmartRetrieval {
         &self,
         session_id: &str,
         current_messages: &[Message],
-        tier2_summaries: Option<Vec<DbSummary>>,
         tier3_messages: Option<Vec<StoredMessage>>,
         cross_session_messages: Option<Vec<StoredMessage>>,
     ) -> anyhow::Result<RetrievalResult> {
@@ -126,7 +124,7 @@ impl SmartRetrieval {
             return Ok(RetrievalResult {
                 strategy: RetrievalStrategy::HotCacheHit,
                 messages: hot_messages,
-                compute_savings: 1.0,  // 100% savings - no recomputation
+                compute_savings: 1.0,
                 retrieved_tokens,
                 sessions_referenced: vec![session_id.to_string()],
             });
@@ -134,11 +132,10 @@ impl SmartRetrieval {
         drop(tier_manager);
 
         // Step 2: Check if we have any historical content
-        let has_summaries = tier2_summaries.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
         let has_tier3 = tier3_messages.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
         let has_cross_session = cross_session_messages.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
 
-        if !has_summaries && !has_tier3 && !has_cross_session {
+        if !has_tier3 && !has_cross_session {
             debug!("No historical content available, returning current messages");
             return Ok(RetrievalResult {
                 strategy: RetrievalStrategy::NoRetrieval,
@@ -149,32 +146,19 @@ impl SmartRetrieval {
             });
         }
 
-        // Step 3: Build optimized context based on available tiers
-        let optimized_context = if self.config.use_hierarchical_context {
-            self.build_hierarchical_context(
-                current_messages,
-                tier2_summaries.as_ref(),
-                tier3_messages.as_ref(),
-                cross_session_messages.as_ref(),
-            ).await?
-        } else {
-            self.build_standard_context(
-                current_messages,
-                tier3_messages.as_ref(),
-                cross_session_messages.as_ref(),
-            ).await?
-        };
+        // Step 3: Build optimized context from Tier 1 (hot) and Tier 3 (cold) only
+        let optimized_context = self.build_context_from_tiers(
+            current_messages,
+            tier3_messages.as_ref(),
+            cross_session_messages.as_ref(),
+        ).await?;
 
-        // Determine strategy based on what was used
-        let strategy = if has_summaries && self.config.prefer_summaries {
-            RetrievalStrategy::SummaryCompression
-        } else if self.config.importance_threshold > 0.0 {
+        let strategy = if self.config.importance_threshold > 0.0 {
             RetrievalStrategy::ImportanceFiltered
         } else {
             RetrievalStrategy::FullRetrieval
         };
 
-        // Calculate compute savings
         let compute_savings = self.estimate_compute_savings(&strategy, &optimized_context.messages);
 
         info!(
@@ -187,88 +171,8 @@ impl SmartRetrieval {
         Ok(optimized_context)
     }
 
-    /// Build hierarchical context (summary first, then details)
-    async fn build_hierarchical_context(
-        &self,
-        current_messages: &[Message],
-        tier2_summaries: Option<&Vec<DbSummary>>,
-        tier3_messages: Option<&Vec<StoredMessage>>,
-        cross_session_messages: Option<&Vec<StoredMessage>>,
-    ) -> anyhow::Result<RetrievalResult> {
-        let mut context = Vec::new();
-        let mut retrieved_tokens = 0;
-        let mut sessions_referenced = Vec::new();
-
-        // Reserve budget for current messages
-        let current_tokens: usize = current_messages.iter()
-            .map(|m| self.estimate_message_tokens(m))
-            .sum();
-
-        let budget_for_history = self.config.max_retrieved_tokens.saturating_sub(current_tokens);
-
-        // Step 1: Add cross-session context if available (highest priority)
-        if let Some(cross_msgs) = cross_session_messages {
-            if !cross_msgs.is_empty() {
-                let cross_context = self.add_cross_session_context(
-                    cross_msgs,
-                    budget_for_history / 3,  // Allocate 1/3 budget for cross-session
-                );
-                retrieved_tokens += self.count_tokens(&cross_context);
-
-                // Track unique sessions
-                for msg in cross_msgs.iter().take(3) {
-                    if !sessions_referenced.contains(&msg.session_id) {
-                        sessions_referenced.push(msg.session_id.clone());
-                    }
-                }
-
-                context.extend(cross_context);
-            }
-        }
-
-        // Step 2: Add summaries if available and preferred
-        if self.config.prefer_summaries {
-            if let Some(summaries) = tier2_summaries {
-                if !summaries.is_empty() {
-                    let summary_context = self.add_summary_context(
-                        summaries,
-                        budget_for_history.saturating_sub(retrieved_tokens),
-                    );
-                    retrieved_tokens += self.count_tokens(&summary_context);
-                    context.extend(summary_context);
-
-                    info!("📋 Used {} summaries (compressed context)", summaries.len());
-                }
-            }
-        }
-
-        // Step 3: Add important details from Tier 3 if budget allows
-        if retrieved_tokens < budget_for_history {
-            if let Some(tier3_msgs) = tier3_messages {
-                let remaining_budget = budget_for_history.saturating_sub(retrieved_tokens);
-                let detail_context = self.add_important_details(
-                    tier3_msgs,
-                    remaining_budget,
-                );
-                retrieved_tokens += self.count_tokens(&detail_context);
-                context.extend(detail_context);
-            }
-        }
-
-        // Step 4: Add current messages (always included, full detail)
-        context.extend_from_slice(current_messages);
-
-        Ok(RetrievalResult {
-            strategy: RetrievalStrategy::SummaryCompression,
-            messages: context,
-            compute_savings: 0.0,  // Will be calculated by caller
-            retrieved_tokens,
-            sessions_referenced,
-        })
-    }
-
-    /// Build standard context (importance-filtered only)
-    async fn build_standard_context(
+    /// Build context from Tier 1 (hot) and Tier 3 (cold storage) with importance filtering
+    async fn build_context_from_tiers(
         &self,
         current_messages: &[Message],
         tier3_messages: Option<&Vec<StoredMessage>>,
@@ -278,17 +182,16 @@ impl SmartRetrieval {
         let mut retrieved_tokens = 0;
         let mut sessions_referenced = Vec::new();
 
-        // Calculate budget
         let current_tokens: usize = current_messages.iter()
             .map(|m| self.estimate_message_tokens(m))
             .sum();
 
         let budget_for_history = self.config.max_retrieved_tokens.saturating_sub(current_tokens);
 
-        // Add cross-session messages
+        // Add cross-session context (highest priority, 1/3 of budget)
         if let Some(cross_msgs) = cross_session_messages {
             if !cross_msgs.is_empty() {
-                let cross_context = self.add_cross_session_context(cross_msgs, budget_for_history / 2);
+                let cross_context = self.add_cross_session_context(cross_msgs, budget_for_history / 3);
                 retrieved_tokens += self.count_tokens(&cross_context);
 
                 for msg in cross_msgs.iter().take(3) {
@@ -301,7 +204,7 @@ impl SmartRetrieval {
             }
         }
 
-        // Add filtered tier3 messages
+        // Add importance-filtered messages from Tier 3 (cold storage)
         if let Some(tier3_msgs) = tier3_messages {
             let remaining_budget = budget_for_history.saturating_sub(retrieved_tokens);
             let detail_context = self.add_important_details(tier3_msgs, remaining_budget);
@@ -309,7 +212,7 @@ impl SmartRetrieval {
             context.extend(detail_context);
         }
 
-        // Add current messages
+        // Always append current messages last
         context.extend_from_slice(current_messages);
 
         Ok(RetrievalResult {
@@ -360,46 +263,6 @@ impl SmartRetrieval {
         context
     }
 
-    /// Add summary context with compression
-    fn add_summary_context(
-        &self,
-        summaries: &[DbSummary],
-        token_budget: usize,
-    ) -> Vec<Message> {
-        let mut context = Vec::new();
-        let mut used_tokens = 0;
-
-        // Sort summaries by relevance (compression ratio as proxy for importance)
-        let mut scored: Vec<_> = summaries.iter()
-            .map(|s| (s, s.compression_ratio))
-            .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Track best compression for logging
-        let best_compression = scored.first().map(|(s, _)| s.compression_ratio).unwrap_or(1.0);
-
-        for (summary, _score) in scored.iter() {
-            let summary_tokens = summary.summary_text.len() / 4;
-            if used_tokens + summary_tokens > token_budget {
-                break;
-            }
-
-            context.push(Message {
-                role: "system".to_string(),
-                content: format!("[Summary: {}]", summary.summary_text),
-            });
-            used_tokens += summary_tokens;
-        }
-
-        info!("Added {} summaries ({} tokens, compression saved {}%)",
-              context.len(),
-              used_tokens,
-              (1.0 - best_compression) * 100.0
-        );
-
-        context
-    }
-
     /// Add important details with importance filtering and budget
     fn add_important_details(
         &self,
@@ -447,27 +310,12 @@ impl SmartRetrieval {
     }
 
     /// Estimate compute savings based on strategy
-    fn estimate_compute_savings(&self, strategy: &RetrievalStrategy, messages: &[Message]) -> f32 {
+    fn estimate_compute_savings(&self, strategy: &RetrievalStrategy, _messages: &[Message]) -> f32 {
         match strategy {
-            RetrievalStrategy::HotCacheHit => 1.0,  // 100% savings (cached in RAM)
-            RetrievalStrategy::SummaryCompression => {
-                // Estimate based on token reduction
-                // If we compressed 2000 tokens to 50, that's 97.5% savings
-                let total_tokens = self.count_tokens(messages);
-                if total_tokens < 100 {
-                    0.95  // High compression
-                } else if total_tokens < 500 {
-                    0.75  // Medium compression
-                } else {
-                    0.5   // Low compression
-                }
-            }
-            RetrievalStrategy::ImportanceFiltered => {
-                // Savings from filtering out unimportant messages
-                0.6  // ~60% savings from importance filtering
-            }
-            RetrievalStrategy::FullRetrieval => 0.0,  // No savings
-            RetrievalStrategy::NoRetrieval => 0.0,    // No savings (but also no cost)
+            RetrievalStrategy::HotCacheHit => 1.0,
+            RetrievalStrategy::ImportanceFiltered => 0.6,
+            RetrievalStrategy::FullRetrieval => 0.0,
+            RetrievalStrategy::NoRetrieval => 0.0,
         }
     }
 

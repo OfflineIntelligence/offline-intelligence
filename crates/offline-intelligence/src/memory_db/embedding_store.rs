@@ -4,6 +4,7 @@
 use crate::memory_db::schema::*;
 use rusqlite::{params, Result, Row};
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use tracing::{info, warn};
 use r2d2::Pool;
@@ -27,6 +28,9 @@ pub struct EmbeddingStore {
     ann_index: RwLock<Option<HNSWIndex<f32, i64>>>,
     // In-memory cache for linear search fallbacks
     embedding_cache: RwLock<HashMap<i64, Vec<f32>>>,
+    // Set to true when embeddings are added but the index hasn't been rebuilt yet.
+    // The rebuild is deferred until the next search (lazy strategy).
+    index_dirty: AtomicBool,
 }
 
 impl EmbeddingStore {
@@ -35,6 +39,7 @@ impl EmbeddingStore {
             pool,
             ann_index: RwLock::new(None),
             embedding_cache: RwLock::new(HashMap::new()),
+            index_dirty: AtomicBool::new(false),
         }
     }
 
@@ -86,6 +91,7 @@ impl EmbeddingStore {
             .map_err(|e| anyhow::anyhow!("Failed to build index: {}", e))?;
         
         *self.ann_index.write().unwrap() = Some(index);
+        self.index_dirty.store(false, Ordering::Release);
         info!("ANN index initialized with {} embeddings", cache.len());
         Ok(())
     }
@@ -102,12 +108,10 @@ impl EmbeddingStore {
         cache.insert(embedding.message_id, embedding.embedding.clone());
 
         if let Some(ref mut index) = *self.ann_index.write().unwrap() {
-            // Ignore add errors; rebuild ensures index stays consistent
+            // Add to the graph structure; the build (which is the expensive O(n log n) step)
+            // is deferred until the next search via the dirty flag.
             let _ = index.add(&embedding.embedding, embedding.message_id);
-            // Re-building after every add is expensive, but necessary for HNSW 
-            // if you want immediate searchability of the new item.
-            index.build(Metric::CosineSimilarity)
-                .map_err(|e| anyhow::anyhow!("Failed to rebuild index: {}", e))?;
+            self.index_dirty.store(true, Ordering::Release);
         }
         Ok(())
     }
@@ -121,6 +125,22 @@ impl EmbeddingStore {
     ) -> anyhow::Result<Vec<(i64, f32)>> {
         if model.is_empty() || model.len() > 100 {
             return Err(anyhow::anyhow!("Invalid model name"));
+        }
+
+        // Lazy rebuild: if new embeddings have been added since the last build,
+        // rebuild now before searching. Uses a double-check under the write lock
+        // to avoid redundant rebuilds when multiple threads enter concurrently.
+        if self.index_dirty.load(Ordering::Acquire) {
+            let mut index_guard = self.ann_index.write().unwrap();
+            if self.index_dirty.load(Ordering::Acquire) {
+                if let Some(ref mut index) = *index_guard {
+                    if let Err(e) = index.build(Metric::CosineSimilarity) {
+                        warn!("HNSW rebuild failed, search will use stale index: {}", e);
+                    }
+                }
+                self.index_dirty.store(false, Ordering::Release);
+            }
+            // write lock drops here before the read-lock search below
         }
 
         {

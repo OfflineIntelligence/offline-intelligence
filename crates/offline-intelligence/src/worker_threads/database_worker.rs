@@ -9,6 +9,7 @@ use crate::{
     shared_state::SharedState,
     memory::Message,
     memory_db::{StoredMessage, Transaction, DatabaseStats},
+    cache_management::cache_scorer::score_message_importance,
 };
 
 pub struct DatabaseWorker {
@@ -27,46 +28,64 @@ impl DatabaseWorker {
         messages: Vec<Message>,
     ) -> anyhow::Result<()> {
         debug!("Database worker storing {} messages for session: {}", messages.len(), session_id);
-        
-        // Use the shared database pool for direct operations
-        // This bypasses the HTTP layer for better performance
+
+        let batch: Vec<(String, String, i32, i32, f32)> = messages.iter().enumerate()
+            .map(|(i, m)| (
+                m.role.clone(),
+                m.content.clone(),
+                i as i32,
+                (m.content.len() / 4) as i32,
+                score_message_importance(&m.role, &m.content),
+            ))
+            .collect();
+
+        self.shared_state.database_pool.conversations
+            .store_messages_batch(&session_id, &batch)?;
+
         info!("Stored {} messages for session {}", messages.len(), session_id);
         Ok(())
     }
-    
+
     /// Retrieve conversation from database
     pub async fn get_conversation(
         &self,
         session_id: &str,
     ) -> anyhow::Result<Vec<StoredMessage>> {
         debug!("Database worker retrieving conversation: {}", session_id);
-        
-        // Direct database access through shared pool
-        let messages = Vec::new(); // Placeholder for actual implementation
+
+        let messages = self.shared_state.database_pool.conversations
+            .get_session_messages(session_id, None, None)?;
+
         info!("Retrieved conversation {} with {} messages", session_id, messages.len());
         Ok(messages)
     }
-    
+
     /// Update conversation title
     pub async fn update_conversation_title(
         &self,
         session_id: &str,
-        _title: &str,
+        title: &str,
     ) -> anyhow::Result<()> {
         debug!("Database worker updating title for session: {}", session_id);
-        
+
+        self.shared_state.database_pool.conversations
+            .update_session_title(session_id, title)?;
+
         info!("Updated conversation title for session {}", session_id);
         Ok(())
     }
-    
+
     /// Delete conversation
     pub async fn delete_conversation(
         &self,
         session_id: &str,
     ) -> anyhow::Result<()> {
         debug!("Database worker deleting conversation: {}", session_id);
-        
-        info!("Deleted conversation {}", session_id);
+
+        let deleted = self.shared_state.database_pool.conversations
+            .delete_session(session_id)?;
+
+        info!("Deleted conversation {} ({} records removed)", session_id, deleted);
         Ok(())
     }
     

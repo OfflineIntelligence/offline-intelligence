@@ -17,7 +17,7 @@ High-performance LLM inference engine with memory management. Cross-platform nat
 
 <br>
 
-**Current Version:** v0.1.3 (March 22, 2026) |
+**Current Version:** v0.1.4 (March 27, 2026) |
 **License:** Apache 2.0
 
 </div>
@@ -52,7 +52,8 @@ The Offline Intelligence Library is a high-performance, cross-platform LLM infer
 Key Features:
 - Multi-language Support: Native bindings for Rust, Python, Java, C++, and JavaScript
 - Hardware Optimization: Automatic resource detection and allocation
-- Memory Management: Persistent conversation storage with SQLite backend
+- Memory Management: Persistent conversation storage with SQLite backend, lazy HNSW ANN index rebuild
+- Context Intelligence: Content-aware importance scoring, KV cache integration with llama-server
 - Scalable Architecture: Concurrent request handling with rate limiting
 - Monitoring Ready: Prometheus metrics and structured logging
 - Production Ready: Kubernetes-friendly with health checks and readiness probes
@@ -84,9 +85,10 @@ Project Links:
 
 ## Release Versions
 
-Current Version: **v0.1.3** (Released March 22, 2026)
+Current Version: **v0.1.4** (Released March 27, 2026)
 
 Version History:
+- v0.1.4 (2026-03-27): Lazy HNSW index rebuild (dirty-flag deferred rebuild eliminates per-insert O(n²) cost), content-aware message importance scoring replacing hardcoded 0.5 values, real llama-server KV cache integration via `/slots` HTTP API (token-bucket metadata entries with position-based importance), `sysinfo`-based dynamic KV memory limits (25% of available RAM, clamped 256 MB–8 GB), fully wired database and cache worker threads, operational admin maintenance endpoints (session cleanup, database optimize with WAL checkpoint)
 - v0.1.3 (2026-03-22): Thread-based server architecture, HTTP-wired SDK bindings (all 5 languages), multi-format model support (.gguf/.onnx/.trt/.safetensors), new backend_url and openrouter_api_key fields, API port changed to 9999, new model/engine/worker management modules, conversation and title APIs
 - v0.1.2 (2026-02-07): Added automatic hardware detection, improved memory management, enhanced error handling, fixed critical security vulnerabilities
 - v0.1.1 (2025-12-15): Initial public release with multi-language bindings, core LLM integration, and memory management system
@@ -200,17 +202,18 @@ The library follows a modular design with clear separation of concerns:
   - online_api.rs: Online/OpenRouter mode switching
   - memory_api.rs: Memory management endpoints
   - search_api.rs: Search and retrieval functions
-- cache_management/: KV cache management (enabled in v0.1.3)
-  - cache_manager.rs: Cache lifecycle management
+- cache_management/: KV cache management (enabled in v0.1.3, wired in v0.1.4)
+  - cache_manager.rs: Cache lifecycle management; sysinfo-based memory limits; KV embedding generation
   - cache_bridge.rs: Cache-to-database bridge
-  - cache_scorer.rs: Cache eviction scoring
+  - cache_scorer.rs: Cache eviction scoring; content-aware `score_message_importance()`
+  - llama_cache_interface.rs: llama-server `/slots` HTTP integration; token-bucket KV entries
 - context_engine/: Context processing
   - context_builder.rs: Context construction algorithms
   - orchestrator.rs: Context management orchestrator
   - retrieval_planner.rs: Retrieval planning
 - memory_db/: Database layer
-  - conversation_store.rs: Conversation storage
-  - embedding_store.rs: Embedding vector storage
+  - conversation_store.rs: Conversation storage; `optimize()` (PRAGMA optimize + WAL checkpoint)
+  - embedding_store.rs: Embedding vector storage; lazy HNSW dirty-flag rebuild
   - schema.rs: Database schema definitions
 - model_management/: Model lifecycle (new in v0.1.3)
   - downloader.rs: Model download from HuggingFace
@@ -257,7 +260,7 @@ The library follows a modular design with clear separation of concerns:
 ### Rust Usage
 
 Installation:
-Add `offline-intelligence = "0.1.3"` to your Cargo.toml dependencies
+Add `offline-intelligence = "0.1.4"` to your Cargo.toml dependencies
 
 The Rust crate IS the server. You embed and start it directly in your application.
 
@@ -296,7 +299,7 @@ async fn main() -> anyhow::Result<()> {
 
 Installation:
 ```bash
-pip install offline-intelligence==0.1.3
+pip install offline-intelligence==0.1.4
 ```
 
 The Python package is a pure HTTP client. The Rust server must be running first.
@@ -350,7 +353,7 @@ ai = OfflineIntelligence(cfg)
 
 Installation:
 ```bash
-npm install offline-intelligence@0.1.3
+npm install offline-intelligence@0.1.4
 ```
 
 The JavaScript package is a pure HTTP client (axios-based). The Rust server must be running first.
@@ -418,7 +421,7 @@ Add the JitPack repository and dependency to your pom.xml or build.gradle:
 - Repository: https://jitpack.io
 - GroupId: com.github.OfflineIntelligence
 - ArtifactId: offline-intelligence
-- Version: v0.1.3
+- Version: v0.1.4
 
 Maven:
 ```xml
@@ -432,7 +435,7 @@ Maven:
 <dependency>
     <groupId>com.github.OfflineIntelligence</groupId>
     <artifactId>offline-intelligence</artifactId>
-    <version>v0.1.3</version>
+    <version>v0.1.4</version>
 </dependency>
 ```
 
@@ -443,7 +446,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.OfflineIntelligence:offline-intelligence:v0.1.3'
+    implementation 'com.github.OfflineIntelligence:offline-intelligence:v0.1.4'
 }
 ```
 
@@ -511,7 +514,7 @@ include(FetchContent)
 FetchContent_Declare(
     offline_intelligence
     GIT_REPOSITORY https://github.com/OfflineIntelligence/offline-intelligence.git
-    GIT_TAG        v0.1.3
+    GIT_TAG        v0.1.4
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(offline_intelligence)
@@ -522,7 +525,7 @@ target_link_libraries(your_target PRIVATE offline_intelligence)
 
 Installation — Option B (Conan):
 ```bash
-conan install --requires="offline-intelligence/0.1.3" --build=missing
+conan install --requires="offline-intelligence/0.1.4" --build=missing
 ```
 
 Installation — Option C (manual):
@@ -593,19 +596,19 @@ Package Managers:
 
 Rust (Cargo):
 ```bash
-cargo add offline-intelligence@0.1.3
+cargo add offline-intelligence@0.1.4
 # or in Cargo.toml:
-# offline-intelligence = "0.1.3"
+# offline-intelligence = "0.1.4"
 ```
 
 Python (PyPI):
 ```bash
-pip install offline-intelligence==0.1.3
+pip install offline-intelligence==0.1.4
 ```
 
 JavaScript/Node.js (npm):
 ```bash
-npm install offline-intelligence@0.1.3
+npm install offline-intelligence@0.1.4
 ```
 
 Java (JitPack):
@@ -617,7 +620,7 @@ Java (JitPack):
 <dependency>
     <groupId>com.github.OfflineIntelligence</groupId>
     <artifactId>offline-intelligence</artifactId>
-    <version>v0.1.3</version>
+    <version>v0.1.4</version>
 </dependency>
 ```
 
@@ -626,7 +629,7 @@ C++ (CMake FetchContent):
 FetchContent_Declare(
     offline_intelligence
     GIT_REPOSITORY https://github.com/OfflineIntelligence/offline-intelligence.git
-    GIT_TAG v0.1.3
+    GIT_TAG v0.1.4
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(offline_intelligence)
@@ -634,7 +637,7 @@ FetchContent_MakeAvailable(offline_intelligence)
 
 C++ (Conan):
 ```bash
-conan install --requires="offline-intelligence/0.1.3" --build=missing
+conan install --requires="offline-intelligence/0.1.4" --build=missing
 ```
 
 ## End-to-End Setup
@@ -803,24 +806,24 @@ The Offline Intelligence Library works with GGUF format models. You can download
 Package Managers:
 
 Rust (Cargo):
-Add `offline-intelligence = "0.1.3"` to your Cargo.toml dependencies
+Add `offline-intelligence = "0.1.4"` to your Cargo.toml dependencies
 
 Python (PyPI):
-Run `pip install offline-intelligence==0.1.3`
+Run `pip install offline-intelligence==0.1.4`
 
 JavaScript/Node.js (npm):
-Run `npm install offline-intelligence@0.1.3`
+Run `npm install offline-intelligence@0.1.4`
 
 Java (JitPack):
 Add the JitPack repository and dependency to your pom.xml or build.gradle:
 - Repository: https://jitpack.io
 - GroupId: com.github.OfflineIntelligence
 - ArtifactId: offline-intelligence
-- Version: v0.1.3
+- Version: v0.1.4
 
 C++ (Header-only via CMake FetchContent or Conan):
-- CMake: Use `FetchContent_Declare` with `GIT_TAG v0.1.3`
-- Conan: `conan install --requires="offline-intelligence/0.1.3"`
+- CMake: Use `FetchContent_Declare` with `GIT_TAG v0.1.4`
+- Conan: `conan install --requires="offline-intelligence/0.1.4"`
 - Manual: Copy `bindings/cpp/include/offline_intelligence/offline_intelligence.hpp`
   Requires: `cpp-httplib` and `nlohmann_json` headers
 
@@ -1470,6 +1473,18 @@ Community support is available through GitHub Issues for bug reports, Discussion
 Enterprise support options include priority support for commercial users, professional services for consulting and custom development, and training sessions.
 
 ## Changelog
+
+### v0.1.4 (2026-03-27)
+- Lazy HNSW index rebuild: `EmbeddingStore` now uses an `AtomicBool` dirty flag; index is rebuilt once on the first search after inserts, eliminating the previous per-insert O(n²) rebuild cost
+- Content-aware message importance scoring: replaced all hardcoded `0.5` values with `score_message_importance(role, content)` — role base (system=0.9, assistant=0.6, user=0.4) plus bonuses for code blocks, key concepts, and message length
+- Real llama-server KV cache integration: `LlamaKVCacheInterface` now queries `GET /slots` for live token counts; cache operations use `POST /slots/0` with `erase`/`restore` actions
+- Token-bucket KV entries: slot token sequences divided into 64-token buckets; importance derived from position fraction (earlier = higher priority)
+- `sysinfo`-based memory limits: `estimate_max_cache_memory()` uses real available system RAM (25% allocated to KV cache, clamped 256 MB–8 GB)
+- KV embedding generation wired: `generate_and_store_kv_embeddings()` matches KV entries to stored messages, calls `store_embedding()`, and marks `embedding_generated = true`
+- Database worker fully wired: `store_messages`, `get_conversation`, `update_conversation_title`, `delete_conversation` all call real database methods
+- Cache worker fully wired: `update_cache` flushes to database; `get_cache_entries` reads from KV snapshot store
+- Admin maintenance operational: `cleanup_expired_sessions` and `clear_inactive_sessions` use `DashMap::retain()` with elapsed-time thresholds; `optimize_database` runs `PRAGMA optimize + PRAGMA wal_checkpoint(TRUNCATE)`
+- SQLite `optimize()` method added to `MemoryDatabase`
 
 ### v0.1.3 (2026-03-22)
 - Thread-based server architecture (`run_thread_server`) replacing single-threaded server

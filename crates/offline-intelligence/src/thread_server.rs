@@ -140,10 +140,11 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
     let _database_worker: Arc<DatabaseWorker> = Arc::new(DatabaseWorker::new(shared_state.clone()));
     let _llm_worker = shared_state.llm_worker.clone();
 
-    // Cache manager
+    // Cache manager — derive config from model context window, wire in LLM worker
     let cache_manager = match crate::cache_management::create_default_cache_manager(
-        crate::cache_management::KVCacheConfig::default(),
+        crate::cache_management::KVCacheConfig::from_ctx_size(cfg.ctx_size),
         memory_database.clone(),
+        Some(shared_state.llm_worker.clone()),
     ) {
         Ok(manager) => { info!("Cache manager initialized"); Some(Arc::new(manager)) }
         Err(e) => { warn!("Cache manager failed: {}, disabled", e); None }
@@ -233,9 +234,10 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
             shared_state_bg.mark_initialization_complete();
             info!("✅ Backend marked as initialized — frontend may proceed");
 
-            // Context orchestrator (may query DB but is quick)
+            // Context orchestrator — token limits derived from model's ctx_size
             let context_orchestrator = match crate::context_engine::create_default_orchestrator(
                 memory_database_bg,
+                cfg_bg.ctx_size,
             ).await {
                 Ok(mut orchestrator) => {
                     orchestrator.set_llm_worker(shared_state_bg.llm_worker.clone());

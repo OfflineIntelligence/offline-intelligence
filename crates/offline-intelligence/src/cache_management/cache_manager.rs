@@ -9,7 +9,7 @@ use crate::cache_management::cache_bridge::CacheContextBridge;
 
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{info, debug};
+use tracing::{info, debug, warn};
 use chrono::{Utc, DateTime};
 use serde::Serialize;
 
@@ -121,18 +121,18 @@ pub struct CacheProcessingResult {
 }
 
 impl KVCacheManager {
-    /// Create a new KV cache manager
+    /// Create a new KV cache manager.
+    /// Pass `llm_worker` to enable pre-clear summarization; pass `None` to disable it.
     pub fn new(
         config: KVCacheConfig,
         database: Arc<MemoryDatabase>,
+        llm_worker: Option<Arc<crate::worker_threads::LLMWorker>>,
     ) -> anyhow::Result<Self> {
         let cache_extractor = CacheExtractor::new(Default::default());
-        
         let scoring_config = CacheScoringConfig::default();
         let cache_scorer = CacheEntryScorer::new(scoring_config);
-        
         let context_bridge = CacheContextBridge::new(20);
-        
+
         Ok(Self {
             config,
             database,
@@ -141,7 +141,7 @@ impl KVCacheManager {
             context_bridge,
             statistics: CacheStatistics::new(),
             session_state: HashMap::new(),
-            llm_worker: None,
+            llm_worker,
         })
     }
     
@@ -202,11 +202,11 @@ impl KVCacheManager {
             } else {
                 ClearReason::MemoryThreshold
             };
-            
+
             // Release the mutable borrow before calling clear_cache
             let _ = session_state;
-            
-            let clear_result = self.clear_cache(session_id, current_kv_entries, clear_reason).await?;
+
+            let clear_result = self.clear_cache(session_id, current_kv_entries, messages, clear_reason).await?;
             result.should_clear_cache = true;
             result.clear_result = Some(clear_result.clone());
             result.bridge_messages.push(clear_result.bridge_message);
@@ -219,6 +219,35 @@ impl KVCacheManager {
             }
         }
         
+        // If the cache was cleared in a *previous* turn (not just now), prepend the stored
+        // summary so the LLM gets cheap continuity without recomputing the full history.
+        if !result.should_clear_cache {
+            let was_previously_cleared = self.session_state
+                .get(session_id)
+                .and_then(|s| s.last_cleared_at)
+                .is_some();
+
+            if was_previously_cleared {
+                match self.database.session_summaries.get(session_id) {
+                    Ok(Some(summary)) => {
+                        let summary_msg = format!(
+                            "[Prior conversation summary — context before memory compression:]\n{}",
+                            summary.summary_text
+                        );
+                        result.bridge_messages.insert(0, summary_msg);
+                        debug!(
+                            "Prepended pre-clear summary for session {} ({} tokens, {} messages summarized)",
+                            session_id, summary.token_count, summary.total_message_count
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        debug!("Could not fetch summary for session {}: {}", session_id, e);
+                    }
+                }
+            }
+        }
+
         // Check if we should retrieve context
         let should_retrieve = self.should_retrieve_context(messages);
         if should_retrieve {
@@ -271,18 +300,31 @@ impl KVCacheManager {
         usage_percent >= self.config.memory_threshold_percent
     }
     
-    /// Estimate maximum cache memory based on system resources
+    /// Estimate maximum KV cache memory.
+    ///
+    /// Priority order:
+    /// 1. `config.max_cache_entries * ~1KB` when the operator has set an explicit entry limit
+    /// 2. 25% of system available memory (queried via sysinfo), clamped to [256 MB, 8 GB]
+    /// 3. Hard-coded 1 GB fallback if sysinfo returns zero
     fn estimate_max_cache_memory(&self) -> usize {
-        // Default to 1GB if we can't determine system memory
-        let default_max = 1024 * 1024 * 1024; // 1GB in bytes
-        
-        // In a real implementation, we would query system memory
-        // For now, use the configuration value or default
         if self.config.max_cache_entries > 0 {
-            // Estimate based on typical KV entry size
-            self.config.max_cache_entries * 1024 // Assuming ~1KB per entry
+            return self.config.max_cache_entries * 1024;
+        }
+
+        let available = {
+            let mut sys = sysinfo::System::new();
+            sys.refresh_memory();
+            sys.available_memory() as usize
+        };
+
+        if available > 0 {
+            // Allocate 25% of currently available RAM to the KV cache, within sane bounds
+            let target = available / 4;
+            const MIN: usize = 256 * 1024 * 1024;  // 256 MB
+            const MAX: usize = 8 * 1024 * 1024 * 1024; // 8 GB
+            target.clamp(MIN, MAX)
         } else {
-            default_max
+            1024 * 1024 * 1024 // 1 GB hard fallback
         }
     }
     
@@ -312,20 +354,23 @@ impl KVCacheManager {
         }
     }
     
-    /// Clear KV cache intelligently
+    /// Clear KV cache intelligently.
+    /// `messages` is the full conversation up to this point — used to generate a compact
+    /// pre-clear summary so the LLM can be re-fed cheaply when the session continues.
     pub async fn clear_cache(
         &mut self,
         session_id: &str,
         current_entries: &[KVEntry],
+        messages: &[crate::memory::Message],
         reason: ClearReason,
     ) -> anyhow::Result<CacheClearResult> {
         info!("Clearing KV cache for session {}: {:?}", session_id, reason);
-        
+
         let start_time = std::time::Instant::now();
-        
+
         // 1. Extract important entries
         let extracted = self.cache_extractor.extract_entries(current_entries, &self.cache_scorer);
-        
+
         // 2. Filter entries to preserve
         let to_preserve = self.cache_extractor.filter_preserved_entries(
             &extracted,
@@ -333,54 +378,162 @@ impl KVCacheManager {
             self.config.preserve_system_prompts,
             self.config.preserve_code_entries,
         );
-        
+
         // 3. Create snapshot if configured
         let snapshot_id = if self.should_create_snapshot(&reason) {
             Some(self.create_snapshot(session_id, &to_preserve).await?)
         } else {
             None
         };
-        
+
         // 4. Extract keywords from preserved entries
         let preserved_keywords: Vec<String> = to_preserve.iter()
             .flat_map(|e| e.keywords.clone())
             .take(10)
             .collect();
-        
-        // 5. Generate bridge message
-        let bridge_message = self.context_bridge.create_clear_bridge(
-            current_entries.len().saturating_sub(to_preserve.len()),
-            to_preserve.len(),
-            &preserved_keywords,
-        );
-        
-        // 6. Update statistics
+
+        // 5. Generate a compact pre-clear summary so re-feeding after the clear
+        //    costs only ~300 tokens instead of the full conversation history.
+        let summary_text = self.generate_pre_clear_summary(session_id, messages).await;
+
+        // 6. Persist the updated cumulative summary (one row per session, replaced each time).
+        if let Some(ref text) = summary_text {
+            let token_estimate = (text.len() / 4) as i32;
+            let msg_count = messages.len() as i32;
+            if let Err(e) = self.database.session_summaries.upsert(
+                session_id, text, token_estimate, msg_count,
+            ) {
+                // Non-fatal: log and continue without the summary
+                info!("Could not persist cumulative summary for {}: {}", session_id, e);
+            }
+        }
+
+        // 7. Build bridge message: use the summary if available, otherwise fall back
+        //    to the generic bridge sentence from CacheContextBridge.
+        let bridge_message = match summary_text {
+            Some(ref text) => format!(
+                "[Memory compressed — conversation summary up to this point:]\n{}",
+                text
+            ),
+            None => self.context_bridge.create_clear_bridge(
+                current_entries.len().saturating_sub(to_preserve.len()),
+                to_preserve.len(),
+                &preserved_keywords,
+            ),
+        };
+
+        // 8. Update statistics
         self.statistics.record_clear(
             current_entries.len(),
             to_preserve.len(),
             reason.clone(),
             session_id,
         );
-        
-        // 7. Update session state
+
+        // 9. Update session state
         if let Some(state) = self.session_state.get_mut(session_id) {
             state.entry_count = to_preserve.len();
             state.last_snapshot_id = snapshot_id;
             state.last_cleared_at = Some(Utc::now());
             state.metadata.insert("last_clear_reason".to_string(), format!("{:?}", reason));
         }
-        
+
         let duration = start_time.elapsed();
         debug!("Cache clear completed in {:?}", duration);
-        
+
         Ok(CacheClearResult {
-            entries_to_keep: to_preserve.clone(), // CLONE FIXED HERE
+            entries_to_keep: to_preserve.clone(),
             entries_cleared: current_entries.len().saturating_sub(to_preserve.len()),
             bridge_message,
             snapshot_id,
             preserved_keywords,
             clear_reason: reason,
         })
+    }
+
+    /// Call the LLM to produce an updated cumulative summary before clearing.
+    ///
+    /// If a previous summary exists for this session, it is included in the prompt so the
+    /// LLM produces a single unified summary covering the entire conversation history —
+    /// not just the current window. This way there is always exactly one summary per session
+    /// and it grows more complete with every cache clear.
+    ///
+    /// Returns `None` if the LLM is unavailable or there is nothing worth summarizing.
+    async fn generate_pre_clear_summary(
+        &self,
+        session_id: &str,
+        messages: &[crate::memory::Message],
+    ) -> Option<String> {
+        // Only worth summarizing if there's real content
+        if messages.len() < 4 {
+            return None;
+        }
+
+        let llm_worker = self.llm_worker.as_ref()?;
+
+        // Fetch the existing cumulative summary for this session, if any
+        let existing_summary = self.database.session_summaries.get(session_id)
+            .unwrap_or(None);
+
+        // Build system prompt — tell the LLM what it already knows vs what is new
+        let system_content = match &existing_summary {
+            Some(prev) => format!(
+                "You are a concise summarizer. You will be given a running summary of a \
+                 conversation followed by new messages that have occurred since that summary. \
+                 Produce a single updated summary that covers EVERYTHING — the prior summary \
+                 and the new messages combined. Be brief (target under 400 tokens). \
+                 Include key facts, decisions, code, numbers, and names. No commentary.\n\n\
+                 PRIOR SUMMARY (covers everything before these new messages):\n{}",
+                prev.summary_text
+            ),
+            None => "You are a concise summarizer. Summarize the following conversation \
+                     into key facts, decisions, code snippets, and figures. \
+                     Be brief — target under 300 tokens. No commentary.".to_string(),
+        };
+
+        let mut context: Vec<crate::memory::Message> = vec![
+            crate::memory::Message {
+                role: "system".to_string(),
+                content: system_content,
+            },
+        ];
+
+        // Include at most the last 40 messages to keep the summarization call cheap
+        let tail = if messages.len() > 40 {
+            &messages[messages.len() - 40..]
+        } else {
+            messages
+        };
+        context.extend_from_slice(tail);
+
+        let user_prompt = if existing_summary.is_some() {
+            "Please produce the updated cumulative summary now, covering both the prior summary and these new messages."
+        } else {
+            "Please summarize the above conversation now."
+        };
+        context.push(crate::memory::Message {
+            role: "user".to_string(),
+            content: user_prompt.to_string(),
+        });
+
+        match llm_worker.generate_response(session_id.to_string(), context).await {
+            Ok(summary) if !summary.trim().is_empty() => {
+                let clear_num = existing_summary.as_ref().map(|s| s.clear_count + 1).unwrap_or(1);
+                info!(
+                    "Generated cumulative summary #{} for session {} ({} chars)",
+                    clear_num, session_id, summary.len()
+                );
+                Some(summary)
+            }
+            Ok(_) => {
+                debug!("Pre-clear summary was empty for session {}", session_id);
+                None
+            }
+            Err(e) => {
+                info!("Pre-clear summary generation skipped for {}: {}", session_id, e);
+                None
+            }
+        }
     }
     
     /// Check if we should create a snapshot
@@ -731,52 +884,101 @@ impl KVCacheManager {
         self.database.update_kv_cache_metadata(session_id, state).await
     }
     
-    /// Generate and store embeddings for KV cache entries
+    /// Generate and store embeddings for KV cache entries that carry text content.
+    ///
+    /// Each KV entry is matched against the session's stored messages by content.
+    /// Only entries whose text matches an actual stored message get an embedding —
+    /// purely structural entries (attention heads with no readable content) are skipped.
+    /// The embedding is stored via `EmbeddingStore` so it becomes searchable by
+    /// `SmartRetrieval` on future context misses.
     async fn generate_and_store_kv_embeddings(
         &self,
         session_id: &str,
         kv_entries: &[KVEntry],
     ) -> anyhow::Result<()> {
         debug!("Generating embeddings for {} KV cache entries", kv_entries.len());
-        
-        // Collect text content from KV entries for embedding
-        let texts: Vec<String> = kv_entries.iter()
-            .filter_map(|entry| {
-                entry.key_data.as_ref()
-                    .and_then(|data| String::from_utf8(data.clone()).ok())
-                    .or_else(|| String::from_utf8(entry.value_data.clone()).ok())
+
+        // Build a (entry_index, text) list from entries that carry readable content
+        let text_entries: Vec<(usize, String)> = kv_entries.iter().enumerate()
+            .filter_map(|(i, entry)| {
+                let text = entry.key_data.as_ref()
+                    .and_then(|d| String::from_utf8(d.clone()).ok())
+                    .or_else(|| String::from_utf8(entry.value_data.clone()).ok())?;
+                if text.trim().is_empty() { None } else { Some((i, text)) }
             })
-            .filter(|text| !text.is_empty())
             .collect();
-        
-        if texts.is_empty() {
-            debug!("No text content found in KV entries for embedding");
+
+        if text_entries.is_empty() {
+            debug!("No text content in KV entries — skipping embedding generation");
             return Ok(());
         }
-        
-        // Generate embeddings using the LLM worker
-        if let Some(llm_worker) = self.get_llm_worker() {
-            match llm_worker.generate_embeddings(texts).await {
-                Ok(embeddings) => {
-                    debug!("Generated {} embeddings for KV cache entries", embeddings.len());
-                    
-                    // Store embeddings in the database with references to the KV entries
-                    for (i, embedding) in embeddings.iter().enumerate() {
-                        if i < kv_entries.len() {
-                            // Store the embedding for this KV entry
-                            let entry_hash = &kv_entries[i].key_hash;
-                            // Note: This would require adding a method to store KV-specific embeddings
-                            // For now, we'll log the operation
-                            debug!("Would store embedding for KV entry: {}", entry_hash);
+
+        // Build a content→message_id map for the session so we can link embeddings
+        // back to the correct messages row (required for EmbeddingStore foreign key).
+        let stored_messages = self.database.conversations
+            .get_session_messages(session_id, Some(1000), None)
+            .unwrap_or_default();
+        let content_to_id: HashMap<&str, i64> = stored_messages.iter()
+            .map(|m| (m.content.as_str(), m.id))
+            .collect();
+
+        let llm_worker = match self.get_llm_worker() {
+            Some(w) => w,
+            None => {
+                debug!("No LLM worker — cannot generate KV embeddings");
+                return Ok(());
+            }
+        };
+
+        let texts: Vec<String> = text_entries.iter().map(|(_, t)| t.clone()).collect();
+
+        match llm_worker.generate_embeddings(texts).await {
+            Ok(embeddings) => {
+                let mut stored = 0usize;
+                let now = Utc::now();
+
+                for (pos, embedding_vec) in embeddings.iter().enumerate() {
+                    if embedding_vec.is_empty() { continue; }
+                    let Some((_, ref text)) = text_entries.get(pos) else { continue };
+
+                    // Find the message_id this text belongs to
+                    let message_id = match content_to_id.get(text.as_str()).copied() {
+                        Some(id) => id,
+                        None => {
+                            debug!(
+                                "KV entry text has no matching stored message — skipping embedding"
+                            );
+                            continue;
                         }
+                    };
+
+                    let embedding = crate::memory_db::schema::Embedding {
+                        id: 0, // auto-assigned by DB
+                        message_id,
+                        embedding: embedding_vec.clone(),
+                        embedding_model: "local-llm".to_string(),
+                        generated_at: now,
+                    };
+
+                    if let Err(e) = self.database.embeddings.store_embedding(&embedding) {
+                        warn!("Failed to store KV embedding for message {}: {}", message_id, e);
+                    } else {
+                        // Mark the message so we don't re-embed it later
+                        let _ = self.database.conversations.mark_embedding_generated(message_id);
+                        stored += 1;
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to generate embeddings for KV cache: {}", e);
-                }
+
+                info!(
+                    "Stored {}/{} KV embeddings for session {}",
+                    stored, embeddings.len(), session_id
+                );
+            }
+            Err(e) => {
+                warn!("Failed to generate embeddings for KV cache entries: {}", e);
             }
         }
-        
+
         Ok(())
     }
     
@@ -835,13 +1037,14 @@ impl KVCacheManager {
         Ok(entries)
     }
     
-    /// Manual cache clear (for testing or admin purposes)
+    /// Manual cache clear (for testing or admin purposes).
+    /// No messages are available in this path, so no pre-clear summary is generated.
     pub async fn manual_clear_cache(
         &mut self,
         session_id: &str,
         current_entries: &[KVEntry],
     ) -> anyhow::Result<CacheClearResult> {
-        self.clear_cache(session_id, current_entries, ClearReason::Manual).await
+        self.clear_cache(session_id, current_entries, &[], ClearReason::Manual).await
     }
     
     /// Check cache health and perform maintenance if needed
@@ -967,10 +1170,9 @@ impl KVCacheManager {
             info!("Flushing cache data for session: {} (entries: {}, size: {} bytes)", 
                   session_id, state.entry_count, state.cache_size_bytes);
             
-            // Note: In a real implementation, we would flush the actual cache entries
-            // that are held somewhere in the application. Since the KVCacheManager
-            // doesn't hold the actual entries in its state, we just ensure the 
-            // metadata is saved to the database.
+            // KVCacheManager stores metadata, not the raw tensors — those live inside
+            // the llama-server process and are accessed via LlamaKVCacheInterface.
+            // Persisting metadata is the correct shutdown action here.
             self.update_session_metadata(&session_id, &state).await?;
         }
         

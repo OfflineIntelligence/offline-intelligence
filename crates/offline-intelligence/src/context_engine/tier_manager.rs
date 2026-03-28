@@ -1,7 +1,8 @@
 //! Manages the three-tier memory system with robust persistence and indexing
 
 use crate::memory::Message;
-use crate::memory_db::{MemoryDatabase, StoredMessage, Summary as DbSummary, SessionMetadata};
+use crate::memory_db::{MemoryDatabase, StoredMessage, SessionMetadata};
+use crate::cache_management::cache_scorer::score_message_importance;
 use moka::sync::Cache;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,9 +11,9 @@ use tracing::{debug, info};
 /// Configuration for tier management
 #[derive(Debug, Clone)]
 pub struct TierManagerConfig {
+    /// Maximum number of messages stored in Tier 1 hot cache per session.
+    /// Derived from CTX_SIZE: 40% of context window / avg 20 tokens per message.
     pub tier1_max_messages: usize,
-    pub tier2_max_summaries: usize,
-    pub tier2_cache_ttl_seconds: u64,
     pub enable_tier3_persistence: bool,
 }
 
@@ -20,8 +21,20 @@ impl Default for TierManagerConfig {
     fn default() -> Self {
         Self {
             tier1_max_messages: 50,
-            tier2_max_summaries: 20,
-            tier2_cache_ttl_seconds: 3600,
+            enable_tier3_persistence: true,
+        }
+    }
+}
+
+impl TierManagerConfig {
+    /// Derive Tier 1 limits from the model's context window.
+    /// 40% of CTX_SIZE is reserved for current-session hot messages.
+    /// Divided by an average of 20 tokens per message to get the message count cap.
+    pub fn from_ctx_size(ctx_size: u32) -> Self {
+        let tier1_token_budget = (ctx_size as f32 * 0.40) as usize;
+        let avg_tokens_per_message = 20;
+        Self {
+            tier1_max_messages: (tier1_token_budget / avg_tokens_per_message).max(10),
             enable_tier3_persistence: true,
         }
     }
@@ -31,20 +44,18 @@ impl Default for TierManagerConfig {
 #[derive(Debug, Clone, Default)]
 pub struct TierStats {
     pub tier1_count: usize,
-    pub tier2_count: usize,
     pub tier3_count: usize,
 }
 
 pub struct TierManager {
     database: Arc<MemoryDatabase>,
     tier1_cache: Cache<String, (Vec<Message>, Instant)>,
-    tier2_cache: Cache<String, (Vec<DbSummary>, Instant)>,
     pub config: TierManagerConfig,
 }
 
 impl TierManager {
     pub fn new(
-        database: Arc<MemoryDatabase>, 
+        database: Arc<MemoryDatabase>,
         config: TierManagerConfig
     ) -> Self {
         Self {
@@ -52,10 +63,6 @@ impl TierManager {
             tier1_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_idle(Duration::from_secs(3600))
-                .build(),
-            tier2_cache: Cache::builder()
-                .max_capacity(500)
-                .time_to_idle(Duration::from_secs(config.tier2_cache_ttl_seconds))
                 .build(),
             config,
         }
@@ -76,30 +83,6 @@ impl TierManager {
 
     pub async fn get_tier1_content(&self, session_id: &str) -> Option<Vec<Message>> {
         self.tier1_cache.get(session_id).map(|(m, _)| m)
-    }
-
-    // --- Tier 2 (Summary) Methods ---
-
-    pub async fn get_tier2_content(&self, session_id: &str) -> Option<Vec<DbSummary>> {
-        // Check cache first
-        if let Some((summaries, _)) = self.tier2_cache.get(session_id) {
-            return Some(summaries);
-        }
-        
-        // Fall back to database
-        match self.database.summaries.get_session_summaries(session_id) {
-            Ok(summaries) => {
-                // Cache the results
-                if !summaries.is_empty() {
-                    self.tier2_cache.insert(session_id.to_string(), (summaries.clone(), Instant::now()));
-                }
-                Some(summaries)
-            }
-            Err(e) => {
-                debug!("Error getting summaries from database: {}", e);
-                None
-            }
-        }
     }
 
     // --- Tier 3 (Database) Methods ---
@@ -165,11 +148,11 @@ impl TierManager {
             .iter()
             .enumerate()
             .map(|(offset, m)| (
-                m.role.clone(), 
+                m.role.clone(),
                 m.content.clone(),
                 start_index + offset as i32, // Ensure unique index
-                (m.content.len() / 4) as i32, 
-                0.5
+                (m.content.len() / 4) as i32,
+                score_message_importance(&m.role, &m.content)
             ))
             .collect();
         
@@ -230,31 +213,18 @@ impl TierManager {
         let tier1_count = self.get_tier1_content(session_id).await
             .map(|m| m.len())
             .unwrap_or(0);
-        
-        let tier2_count = self.get_tier2_content(session_id).await
-            .map(|s| s.len())
-            .unwrap_or(0);
-        
+
         let tier3_count = match self.database.conversations.get_session_messages(session_id, Some(10000), None) {
             Ok(messages) => messages.len(),
             Err(_) => 0,
         };
 
-        TierStats { 
-            tier1_count, 
-            tier2_count, 
-            tier3_count 
-        }
+        TierStats { tier1_count, tier3_count }
     }
 
     pub async fn cleanup_cache(&self, _older_than_seconds: u64) -> usize {
-        let count = self.tier1_cache.entry_count() + self.tier2_cache.entry_count();
-        
-        // Invalidate entries older than threshold
-        // Note: Moka automatically handles TTL, but we force cleanup
+        let count = self.tier1_cache.entry_count();
         self.tier1_cache.invalidate_all();
-        self.tier2_cache.invalidate_all();
-        
         count as usize
     }
 
@@ -284,10 +254,6 @@ impl Clone for TierManager {
             tier1_cache: Cache::builder()
                 .max_capacity(1000)
                 .time_to_idle(Duration::from_secs(3600))
-                .build(),
-            tier2_cache: Cache::builder()
-                .max_capacity(500)
-                .time_to_idle(Duration::from_secs(self.config.tier2_cache_ttl_seconds))
                 .build(),
             config: self.config.clone(),
         }

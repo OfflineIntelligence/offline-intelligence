@@ -8,27 +8,23 @@ use tracing::{debug, info};
 pub struct RetrievalPlan {
     /// Whether to retrieve from memory at all
     pub needs_retrieval: bool,
-    
+
     /// Which memory tiers to use
-    pub use_tier1: bool,  // Current KV cache
-    pub use_tier2: bool,  // Summarized content
-    pub use_tier3: bool,  // Full database
-    
+    pub use_tier1: bool,  // Hot in-memory cache
+    pub use_tier3: bool,  // Full SQLite database
+
     /// Whether to search across different sessions
     pub cross_session_search: bool,
-    
+
     /// Search strategies to employ
     pub semantic_search: bool,
     pub keyword_search: bool,
     pub temporal_search: bool,
-    
+
     /// Limits for retrieval
     pub max_messages: usize,
     pub max_tokens: usize,
-    
-    /// Target compression ratio if summarizing
-    pub target_compression: f32,
-    
+
     /// Specific topics to search for
     pub search_topics: Vec<String>,
 }
@@ -38,7 +34,6 @@ impl Default for RetrievalPlan {
         Self {
             needs_retrieval: false,
             use_tier1: true,
-            use_tier2: false,
             use_tier3: false,
             cross_session_search: false,
             semantic_search: false,
@@ -46,7 +41,6 @@ impl Default for RetrievalPlan {
             temporal_search: false,
             max_messages: 100,
             max_tokens: 4000,
-            target_compression: 0.3,
             search_topics: Vec::new(),
         }
     }
@@ -137,9 +131,8 @@ impl RetrievalPlanner {
         self.adjust_limits(&mut plan, current_messages, max_context_tokens);
         
         info!(
-            "Created retrieval plan: Tiers({}{}{}), CrossSession({}), Search({}{}{}), PastRefs={}",
+            "Created retrieval plan: Tiers({}{}), CrossSession({}), Search({}{}{}), PastRefs={}",
             if plan.use_tier1 { "1" } else { "" },
-            if plan.use_tier2 { "2" } else { "" },
             if plan.use_tier3 { "3" } else { "" },
             plan.cross_session_search,
             if plan.semantic_search { "S" } else { "" },
@@ -244,17 +237,6 @@ impl RetrievalPlanner {
         session_id: &str,
         has_past_references_in_query: bool,
     ) -> anyhow::Result<()> {
-        let has_summaries = self.database.summaries
-            .get_session_summaries(session_id)
-            .map(|summaries| !summaries.is_empty())
-            .unwrap_or_else(|e| {
-                debug!("Database error checking summaries: {}", e);
-                false
-            });
-        
-        plan.use_tier2 = has_summaries;
-        
-        // NEW: Check if we have messages in database for this session
         let has_db_messages = self.check_if_session_has_db_messages(session_id).await?;
         
         // TIER 3 LOGIC FIXED:
@@ -286,10 +268,6 @@ impl RetrievalPlanner {
         if analysis.has_past_references && has_db_messages && !plan.use_tier3 {
             plan.use_tier3 = true;
             debug!("Past references in messages, using Tier 3");
-        }
-        
-        if analysis.conversation_length > 100 {
-            plan.target_compression = 0.2;
         }
         
         Ok(())

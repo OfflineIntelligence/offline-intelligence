@@ -48,7 +48,7 @@ impl Default for KVCacheConfig {
             enabled: true,
             retrieval_enabled: true,
             clear_after_conversations: 16,  // Clear after 16 conversations
-            memory_threshold_percent: 0.6,  // 60% memory usage
+            memory_threshold_percent: 0.6,  // 60% of model context window
             bridge_enabled: true,
             max_cache_entries: 1000,
             min_importance_to_preserve: 0.7,
@@ -61,6 +61,27 @@ impl Default for KVCacheConfig {
                 max_snapshots: 4,           // Keep last 4 snapshots
             },
         }
+    }
+}
+
+impl KVCacheConfig {
+    /// Build config with token threshold derived from the model's context window size.
+    /// `ctx_size` is the model's total context window in tokens (from Config.ctx_size).
+    /// The clear threshold is 60% of that — the cache is cleared before the window fills.
+    pub fn from_ctx_size(ctx_size: u32) -> Self {
+        let mut config = Self::default();
+        // Express 60% as the threshold; callers convert token count using this ratio
+        // against ctx_size. The ratio is kept so it remains meaningful regardless of model.
+        config.memory_threshold_percent = 0.6;
+        // Max entries: rough heuristic — allow ~4 tokens of KV state per context token
+        config.max_cache_entries = (ctx_size as usize).saturating_mul(4).max(1000);
+        config
+    }
+
+    /// Return the token count at which a cache clear should be triggered.
+    /// This is 60% of the model's context window.
+    pub fn clear_threshold_tokens(&self, ctx_size: u32) -> usize {
+        (ctx_size as f32 * self.memory_threshold_percent) as usize
     }
 }
 

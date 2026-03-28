@@ -6,7 +6,7 @@ import os
 
 class OfflineIntelligenceConan(ConanFile):
     name = "offline-intelligence"
-    version = "0.1.3"
+    version = "0.1.4"
     license = "Apache-2.0"
     author = "Offline Intelligence Team <intelligencedevelopment.io@gmail.com>"
     url = "https://github.com/OfflineIntelligence/offline-intelligence"

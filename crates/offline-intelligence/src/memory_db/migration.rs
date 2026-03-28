@@ -157,6 +157,7 @@ fn get_migrations() -> Vec<(i32, &'static str)> {
         (5, include_str!("migrations/005_curated_files.sql")),
         (6, include_str!("migrations/006_all_files.sql")),
         (7, include_str!("migrations/007_session_file_contexts.sql")),
+        (8, include_str!("migrations/008_session_summaries.sql")),
     ]
 }
 

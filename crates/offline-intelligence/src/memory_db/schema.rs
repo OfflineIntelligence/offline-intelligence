@@ -77,6 +77,19 @@ pub struct Embedding {
     pub generated_at: DateTime<Utc>,
 }
 
+/// Cumulative summary of a session's full conversation history.
+/// There is exactly one row per session. It is replaced (not appended) on every
+/// KV cache clear, so it always covers everything from the start of the session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub summary_text: String,
+    pub token_count: i32,
+    pub total_message_count: i32,
+    pub clear_count: i32,
+    pub last_updated: DateTime<Utc>,
+}
+
 /// Represents KV snapshot for cache management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KvSnapshot {
