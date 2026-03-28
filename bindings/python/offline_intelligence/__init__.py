@@ -1,6 +1,6 @@
 """
 offline_intelligence - Python bindings for Offline Intelligence Library
-Version: 0.1.3
+Version: 0.1.4
 
 Pure-Python HTTP client that communicates with the Offline Intelligence
 server (default port 9999). Supports streaming via Server-Sent Events.
@@ -20,7 +20,7 @@ except ImportError as e:
         "The 'requests' package is required. Install it with: pip install requests"
     ) from e
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __all__ = ["Config", "OfflineIntelligence", "OfflineIntelligenceException"]
 
 
