@@ -3,29 +3,23 @@ use crate::memory_db::MemoryDatabase;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-/// Plan for retrieving content from memory
 #[derive(Debug, Clone)]
 pub struct RetrievalPlan {
-    /// Whether to retrieve from memory at all
+    
     pub needs_retrieval: bool,
 
-    /// Which memory tiers to use
-    pub use_tier1: bool,  // Hot in-memory cache
-    pub use_tier3: bool,  // Full SQLite database
+    pub use_tier1: bool,  
+    pub use_tier3: bool,  
 
-    /// Whether to search across different sessions
     pub cross_session_search: bool,
 
-    /// Search strategies to employ
     pub semantic_search: bool,
     pub keyword_search: bool,
     pub temporal_search: bool,
 
-    /// Limits for retrieval
     pub max_messages: usize,
     pub max_tokens: usize,
 
-    /// Specific topics to search for
     pub search_topics: Vec<String>,
 }
 
@@ -46,7 +40,6 @@ impl Default for RetrievalPlan {
     }
 }
 
-/// Plans retrieval strategies based on conversation context
 pub struct RetrievalPlanner {
     database: Arc<MemoryDatabase>,
     recent_threshold_messages: usize,
@@ -54,7 +47,7 @@ pub struct RetrievalPlanner {
 }
 
 impl RetrievalPlanner {
-    /// Create a new retrieval planner
+    
     pub fn new(database: Arc<MemoryDatabase>) -> Self {
         Self {
             database,
@@ -63,42 +56,37 @@ impl RetrievalPlanner {
         }
     }
     
-    /// Analyze conversation and create retrieval plan
     pub async fn create_plan(
         &self,
         session_id: &str,
         current_messages: &[Message],
         max_context_tokens: usize,
         user_query: Option<&str>,
-        has_past_refs: bool, // NEW parameter
+        has_past_refs: bool, 
     ) -> anyhow::Result<RetrievalPlan> {
         let mut plan = RetrievalPlan {
             max_tokens: max_context_tokens,
             ..Default::default()
         };
         
-        // Check user query first for past references
         let mut has_past_references_in_query = false;
         if let Some(query) = user_query {
-            // Check for cross-session references
+            
             if self.is_cross_session_query(query, session_id) {
                 plan.needs_retrieval = true;
                 plan.cross_session_search = true;
                 plan.search_topics = self.extract_topics_from_query(query);
             }
             
-            // Check for past references in the CURRENT query
             has_past_references_in_query = self.has_past_references_in_text(query);
         }
 
-        // Also use the passed has_past_refs parameter if available
         if !has_past_references_in_query && has_past_refs {
             has_past_references_in_query = true;
         }
 
-        // Check if we need retrieval based on context window limits
         if !plan.needs_retrieval && !self.needs_retrieval(current_messages, max_context_tokens) {
-            // Even if within limits, check if query asks for past content
+            
             if has_past_references_in_query {
                 plan.needs_retrieval = true;
                 debug!("Retrieval needed: query asks for past content");
@@ -110,24 +98,18 @@ impl RetrievalPlanner {
         
         plan.needs_retrieval = true;
         
-        // Always use current context (Tier 1)
         plan.use_tier1 = true;
         
-        // Analyze conversation to determine retrieval strategy
         let analysis = self.analyze_conversation(current_messages, user_query).await?;
         
-        // Determine which tiers to use based on analysis
         self.plan_tier_usage(&mut plan, &analysis, session_id, has_past_references_in_query).await?;
         
-        // Determine search strategies
         self.plan_search_strategies(&mut plan, &analysis, user_query);
         
-        // Extract search topics from analysis if not already set by cross-session logic
         if plan.search_topics.is_empty() {
             plan.search_topics = analysis.extracted_topics;
         }
         
-        // Adjust limits based on available tokens
         self.adjust_limits(&mut plan, current_messages, max_context_tokens);
         
         info!(
@@ -144,13 +126,11 @@ impl RetrievalPlanner {
         Ok(plan)
     }
     
-    /// Check if retrieval is needed based on message volume
     fn needs_retrieval(&self, messages: &[Message], max_tokens: usize) -> bool {
         if messages.len() <= 1 {
             return false;
         }
         
-        // Estimate tokens
         let estimated_tokens: usize = messages.iter()
             .map(|m| m.content.len() / 4)
             .sum();
@@ -158,7 +138,6 @@ impl RetrievalPlanner {
         estimated_tokens > max_tokens
     }
 
-    /// Detect if the user query is asking for information from other sessions
     fn is_cross_session_query(&self, query: &str, _current_session_id: &str) -> bool {
         let cross_session_patterns = [
             "previously", "before", "earlier", "last time", "yesterday",
@@ -168,12 +147,10 @@ impl RetrievalPlanner {
         
         let query_lower = query.to_lowercase();
         
-        // Check for explicit cross-session references
         cross_session_patterns.iter().any(|pattern| query_lower.contains(pattern))
     }
     
-    /// Check for past references in ANY text (not just current messages)
-    pub fn has_past_references_in_text(&self, text: &str) -> bool {  // CHANGED: made public
+    pub fn has_past_references_in_text(&self, text: &str) -> bool {  
         let reference_patterns = [
             "earlier", "before", "previous", "last time", "yesterday",
             "we discussed", "we talked about", "remember", "recall",
@@ -185,14 +162,12 @@ impl RetrievalPlanner {
         reference_patterns.iter().any(|p| text_lower.contains(p))
     }
 
-    /// Helper to extract topics directly from a single query string
     fn extract_topics_from_query(&self, query: &str) -> Vec<String> {
         let words: Vec<&str> = query.split_whitespace().collect();
         if words.len() < 3 {
             return vec![query.to_string()];
         }
         
-        // Simple extraction logic: take the last few words as the topic
         let topic = words.iter()
             .rev()
             .take(4)
@@ -204,7 +179,6 @@ impl RetrievalPlanner {
         vec![topic]
     }
     
-    /// Analyze conversation context
     async fn analyze_conversation(
         &self,
         messages: &[Message],
@@ -216,20 +190,17 @@ impl RetrievalPlanner {
             ..Default::default()
         };
         
-        // Check if query asks for specific information
         if let Some(query) = user_query {
             analysis.requires_specific_details = self.requires_specific_details(query);
             analysis.query_complexity = self.assess_query_complexity(query);
         }
         
-        // Analyze conversation length and patterns
         analysis.conversation_length = messages.len();
         analysis.recency_pattern = self.analyze_recency_pattern(messages);
         
         Ok(analysis)
     }
     
-    /// Plan which memory tiers to use
     async fn plan_tier_usage(
         &self,
         plan: &mut RetrievalPlan,
@@ -239,32 +210,26 @@ impl RetrievalPlanner {
     ) -> anyhow::Result<()> {
         let has_db_messages = self.check_if_session_has_db_messages(session_id).await?;
         
-        // TIER 3 LOGIC FIXED:
-        // 1. Always use Tier 3 if query asks for past content (regardless of conversation length)
         if has_past_references_in_query && has_db_messages {
             plan.use_tier3 = true;
             debug!("Query asks for past content, using Tier 3 (database)");
         }
         
-        // 2. Use Tier 3 for specific details
         if analysis.requires_specific_details && has_db_messages {
             plan.use_tier3 = true;
             debug!("Specific details requested, using Tier 3");
         }
         
-        // 3. Use Tier 3 for cross-session search
         if plan.cross_session_search {
             plan.use_tier3 = true;
             debug!("Cross-session search, using Tier 3");
         }
         
-        // 4. Use Tier 3 for long conversations (for summarization)
         if analysis.conversation_length > 30 && has_db_messages && !plan.use_tier3 {
             plan.use_tier3 = true;
             debug!("Long conversation ({} messages), using Tier 3", analysis.conversation_length);
         }
         
-        // 5. Use Tier 3 if we have past references in recent messages
         if analysis.has_past_references && has_db_messages && !plan.use_tier3 {
             plan.use_tier3 = true;
             debug!("Past references in messages, using Tier 3");
@@ -273,9 +238,8 @@ impl RetrievalPlanner {
         Ok(())
     }
     
-    /// Check if session has messages in database
     async fn check_if_session_has_db_messages(&self, session_id: &str) -> anyhow::Result<bool> {
-        // Quick check: get just 1 message to see if session exists in DB
+        
         match self.database.conversations.get_session_messages(session_id, Some(1), Some(0)) {
             Ok(messages) => Ok(!messages.is_empty()),
             Err(e) => {
@@ -285,27 +249,23 @@ impl RetrievalPlanner {
         }
     }
     
-    /// Plan search strategies
     fn plan_search_strategies(
         &self,
         plan: &mut RetrievalPlan,
         analysis: &ConversationAnalysis,
         user_query: Option<&str>,
     ) {
-        // Semantic search for complex queries or when topics are unclear
+        
         plan.semantic_search = analysis.query_complexity > 0.5 || (analysis.extracted_topics.is_empty() && !plan.cross_session_search);
         
-        // Keyword search for specific references or cross-session topic matches
         plan.keyword_search = analysis.requires_specific_details 
             || analysis.has_past_references 
             || plan.cross_session_search
             || !analysis.extracted_topics.is_empty();
         
-        // Temporal search for time-based references
         plan.temporal_search = self.has_temporal_references(user_query.unwrap_or(""));
     }
     
-    /// Adjust limits based on available context
     fn adjust_limits(
         &self,
         plan: &mut RetrievalPlan,
@@ -318,12 +278,10 @@ impl RetrievalPlanner {
         
         let available_for_retrieval = max_context_tokens.saturating_sub(current_tokens);
         
-        // Assume ~50 tokens per message on average
         let estimated_messages = available_for_retrieval / 50;
         plan.max_messages = estimated_messages.clamp(10, 100);
     }
     
-    /// Extract topics from messages
     fn extract_topics(&self, messages: &[Message]) -> Vec<String> {
         let mut topics = Vec::new();
         
@@ -365,7 +323,6 @@ impl RetrievalPlanner {
         topics
     }
     
-    /// Check for references to past content in messages (renamed for clarity)
     fn has_past_references_in_messages(&self, messages: &[Message]) -> bool {
         let reference_patterns = [
             "earlier", "before", "previous", "last time", "yesterday",
@@ -382,7 +339,6 @@ impl RetrievalPlanner {
         false
     }
     
-    /// Check if query requires specific details
     fn requires_specific_details(&self, query: &str) -> bool {
         let detail_patterns = [
             "exactly", "specifically", "in detail", "step by step",
@@ -394,7 +350,6 @@ impl RetrievalPlanner {
         detail_patterns.iter().any(|p| query_lower.contains(p))
     }
     
-    /// Assess query complexity
     fn assess_query_complexity(&self, query: &str) -> f32 {
         let words: Vec<&str> = query.split_whitespace().collect();
         
@@ -418,7 +373,6 @@ impl RetrievalPlanner {
         complexity.min(1.0)
     }
     
-    /// Analyze recency pattern
     fn analyze_recency_pattern(&self, messages: &[Message]) -> RecencyPattern {
         if messages.len() < 5 {
             return RecencyPattern::RecentOnly;
@@ -438,7 +392,6 @@ impl RetrievalPlanner {
         }
     }
     
-    /// Check for temporal references
     fn has_temporal_references(&self, query: &str) -> bool {
         let temporal_patterns = [
             "yesterday", "today", "tomorrow", "last week", "last month",
@@ -450,7 +403,6 @@ impl RetrievalPlanner {
     }
 }
 
-/// Analysis of conversation context
 #[derive(Debug, Default)]
 struct ConversationAnalysis {
     extracted_topics: Vec<String>,
@@ -461,7 +413,6 @@ struct ConversationAnalysis {
     recency_pattern: RecencyPattern,
 }
 
-/// Pattern of message recency
 #[derive(Debug, Clone, PartialEq, Default)]
 enum RecencyPattern {
     #[default]

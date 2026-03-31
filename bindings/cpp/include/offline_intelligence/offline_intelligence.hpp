@@ -1,21 +1,6 @@
 #ifndef OFFLINE_INTELLIGENCE_HPP
 #define OFFLINE_INTELLIGENCE_HPP
 
-/**
- * offline_intelligence.hpp
- * C++ HTTP client for the Offline Intelligence server.
- * Version: 0.1.3
- *
- * Requires cpp-httplib (https://github.com/yhirose/cpp-httplib)
- * Add it via CMake FetchContent or place httplib.h alongside this header.
- *
- * Usage:
- *   offline_intelligence::Config cfg;
- *   cfg.api_port = 9999;
- *   offline_intelligence::OfflineIntelligence ai(cfg);
- *   auto resp = ai.health_check();
- */
-
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -29,16 +14,12 @@ namespace offline_intelligence {
 
 using json = nlohmann::json;
 
-// ── Exception ───────────────────────────────────────────────────────────
-
 class OfflineIntelligenceException : public std::runtime_error {
 public:
     int status_code;
     explicit OfflineIntelligenceException(const std::string& msg, int code = 0)
         : std::runtime_error(msg), status_code(code) {}
 };
-
-// ── Config ───────────────────────────────────────────────────────────────
 
 struct Config {
     std::string model_path                = "default.gguf";
@@ -64,7 +45,6 @@ struct Config {
     size_t      queue_size                = 100;
     uint64_t    queue_timeout_seconds     = 30;
 
-    /** Populate from environment variables. */
     static Config from_env() {
         Config cfg;
         auto env = [](const char* k) -> std::string {
@@ -85,8 +65,6 @@ struct Config {
     }
 };
 
-// ── Main Client ──────────────────────────────────────────────────────────
-
 class OfflineIntelligence {
 public:
     explicit OfflineIntelligence(const Config& config = Config{})
@@ -102,39 +80,23 @@ public:
         return OfflineIntelligence(Config::from_env());
     }
 
-    // ── Health & Status ──────────────────────────────────────────────
-
-    /** GET /healthz */
     json health_check() { return get_json("/healthz"); }
 
-    /** GET /admin/status */
     json get_status()   { return get_json("/admin/status"); }
 
-    // ── Model Management ──────────────────────────────────────────
-
-    /** POST /admin/load */
     json load_model(const std::string& model_path) {
         json body = {{"model_path", model_path}};
         return post_json("/admin/load", body);
     }
 
-    /** POST /admin/stop */
     json stop_model() { return post_json("/admin/stop", json::object()); }
 
-    // ── Generation ──────────────────────────────────────────────────
-
-    /** POST /generate */
     json generate(const std::string& prompt, json extra = json::object()) {
         json body = extra;
         body["prompt"] = prompt;
         return post_json("/generate", body);
     }
 
-    /**
-     * POST /generate/stream — streams SSE, invoking callback for each token.
-     * @param prompt   The prompt text.
-     * @param on_chunk Called for each received text chunk.
-     */
     void generate_stream(const std::string& prompt,
                          std::function<void(const std::string&)> on_chunk,
                          json extra = json::object())
@@ -145,7 +107,6 @@ public:
 
         cli_.set_read_timeout(static_cast<time_t>(cfg_.stream_timeout_seconds), 0);
 
-        // Use httplib's streaming POST with ContentReceiver
         std::string accumulated;
         auto res = cli_.Post("/generate/stream",
             httplib::Headers{{"Accept", "text/event-stream"}},
@@ -160,11 +121,10 @@ public:
             throw OfflineIntelligenceException("HTTP " + std::to_string(res->status), res->status);
         }
 
-        // Parse the full SSE body (for non-chunked servers)
         std::istringstream ss(res->body);
         std::string line;
         while (std::getline(ss, line)) {
-            // Strip trailing \r
+            
             if (!line.empty() && line.back() == '\r') line.pop_back();
             if (line.size() >= 6 && line.substr(0, 6) == "data: ") {
                 std::string payload = line.substr(6);
@@ -186,47 +146,33 @@ public:
         cli_.set_read_timeout(static_cast<time_t>(cfg_.generate_timeout_seconds), 0);
     }
 
-    // ── Conversations ──────────────────────────────────────────────
-
-    /** GET /conversations */
     json get_conversations() { return get_json("/conversations"); }
 
-    /** GET /conversations/{id} */
     json get_conversation(const std::string& id) {
         return get_json("/conversations/" + id);
     }
 
-    /** DELETE /conversations/{id} */
     json delete_conversation(const std::string& id) {
         auto res = cli_.Delete("/conversations/" + id);
         return handle_response(res);
     }
 
-    /** GET /conversations/{id}/title */
     json get_conversation_title(const std::string& id) {
         return get_json("/conversations/" + id + "/title");
     }
 
-    /** POST /generate/title */
     json generate_title(const std::string& session_id, const std::string& first_message) {
         json body = {{"session_id", session_id}, {"first_message", first_message}};
         return post_json("/generate/title", body);
     }
 
-    // ── Memory ────────────────────────────────────────────────────────────
-
-    /** GET /memory/stats/{session_id} */
     json get_memory_stats(const std::string& session_id) {
         return get_json("/memory/stats/" + session_id);
     }
 
-    /** POST /memory/optimize */
     json optimize_memory() { return post_json("/memory/optimize", json::object()); }
 
-    /** POST /memory/cleanup */
     json cleanup_memory()  { return post_json("/memory/cleanup",  json::object()); }
-
-    // ── Version ────────────────────────────────────────────────────────────
 
     static std::string version() { return "0.1.3"; }
 
@@ -265,8 +211,6 @@ private:
     }
 };
 
-// ── Legacy Server shim (backward compatibility) ────────────────────────────
-
 class Server {
 public:
     [[deprecated("Use OfflineIntelligence instead.")]]
@@ -278,6 +222,6 @@ public:
     static std::string version() { return OfflineIntelligence::version(); }
 };
 
-} // namespace offline_intelligence
+} 
 
-#endif // OFFLINE_INTELLIGENCE_HPP
+#endif 

@@ -2,7 +2,6 @@
 #include <iostream>
 #include <string>
 
-// Forward declarations for the Rust interface
 namespace offline_intelligence {
     struct Config {
         std::string model_path;
@@ -61,7 +60,7 @@ namespace offline_intelligence {
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
-    // Config class
+    
     auto configClass = Napi::Object::New(env);
     configClass.Set("fromEnv", Napi::Function::New(env, [](const Napi::CallbackInfo& info) {
         auto cfg = offline_intelligence::Config_from_env();
@@ -83,7 +82,6 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     
     exports.Set("Config", configClass);
     
-    // runServer function
     exports.Set("runServer", Napi::Function::New(env, [](const Napi::CallbackInfo& info) {
         if (info.Length() < 1 || !info[0].IsObject()) {
             Napi::TypeError::New(info.Env(), "Config object required").ThrowAsJavaScriptException();
@@ -108,7 +106,6 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
         return Napi::Boolean::New(info.Env(), result);
     }));
     
-    // version function
     exports.Set("version", Napi::Function::New(env, [](const Napi::CallbackInfo& info) {
         return Napi::String::New(info.Env(), "0.1.0");
     }));

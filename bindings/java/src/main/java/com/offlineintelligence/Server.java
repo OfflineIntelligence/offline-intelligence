@@ -12,13 +12,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Consumer;
 
-/**
- * HTTP client for the Offline Intelligence server.
- * Version: 0.1.3
- *
- * <p>All methods communicate with the running Offline Intelligence server
- * at http://{apiHost}:{apiPort} (default port 9999).</p>
- */
 public class Server {
 
     private static final String VERSION = "0.1.3";
@@ -36,8 +29,6 @@ public class Server {
             .connectTimeout(Duration.ofSeconds(config.getHealthTimeoutSeconds()))
             .build();
     }
-
-    // ── Internal helpers ─────────────────────────────────────────────────
 
     private String get(String path) throws OfflineIntelligenceException {
         try {
@@ -97,47 +88,30 @@ public class Server {
         }
     }
 
-    // ── Health & Status ──────────────────────────────────────────────────
-
-    /** GET /healthz */
     public String healthCheck() throws OfflineIntelligenceException {
         return get("/healthz");
     }
 
-    /** GET /admin/status */
     public String getStatus() throws OfflineIntelligenceException {
         return get("/admin/status");
     }
 
-    // ── Model Management ─────────────────────────────────────────────────
-
-    /** POST /admin/load */
     public String loadModel(String modelPath) throws OfflineIntelligenceException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("model_path", modelPath);
         return post("/admin/load", body.toString());
     }
 
-    /** POST /admin/stop */
     public String stopModel() throws OfflineIntelligenceException {
         return post("/admin/stop", null);
     }
 
-    // ── Generation ───────────────────────────────────────────────────────
-
-    /** POST /generate */
     public String generate(String prompt) throws OfflineIntelligenceException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("prompt", prompt);
         return post("/generate", body.toString());
     }
 
-    /**
-     * POST /generate/stream — streams SSE response, invoking onChunk for each token.
-     *
-     * @param prompt   The prompt text.
-     * @param onChunk  Callback invoked for each streamed text chunk.
-     */
     public void generateStream(String prompt, Consumer<String> onChunk) throws OfflineIntelligenceException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("prompt", prompt);
@@ -182,29 +156,22 @@ public class Server {
         }
     }
 
-    // ── Conversations ────────────────────────────────────────────────────
-
-    /** GET /conversations */
     public String getConversations() throws OfflineIntelligenceException {
         return get("/conversations");
     }
 
-    /** GET /conversations/{id} */
     public String getConversation(String id) throws OfflineIntelligenceException {
         return get("/conversations/" + id);
     }
 
-    /** DELETE /conversations/{id} */
     public String deleteConversation(String id) throws OfflineIntelligenceException {
         return delete("/conversations/" + id);
     }
 
-    /** GET /conversations/{id}/title */
     public String getConversationTitle(String id) throws OfflineIntelligenceException {
         return get("/conversations/" + id + "/title");
     }
 
-    /** POST /generate/title */
     public String generateTitle(String sessionId, String firstMessage) throws OfflineIntelligenceException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("session_id", sessionId);
@@ -212,29 +179,18 @@ public class Server {
         return post("/generate/title", body.toString());
     }
 
-    // ── Memory ───────────────────────────────────────────────────────────
-
-    /** GET /memory/stats/{session_id} */
     public String getMemoryStats(String sessionId) throws OfflineIntelligenceException {
         return get("/memory/stats/" + sessionId);
     }
 
-    /** POST /memory/optimize */
     public String optimizeMemory() throws OfflineIntelligenceException {
         return post("/memory/optimize", null);
     }
 
-    /** POST /memory/cleanup */
     public String cleanupMemory() throws OfflineIntelligenceException {
         return post("/memory/cleanup", null);
     }
 
-    // ── Legacy / Static ──────────────────────────────────────────────────
-
-    /**
-     * @deprecated Use {@link OfflineIntelligence} instead.
-     *             This method now starts the client and performs a health check.
-     */
     @Deprecated
     public static boolean runServer(Config config) throws OfflineIntelligenceException {
         Server server = new Server(config);
@@ -245,7 +201,6 @@ public class Server {
         return true;
     }
 
-    /** @return library version string */
     public static String version() {
         return VERSION;
     }

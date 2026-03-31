@@ -1,4 +1,3 @@
-//! API endpoints for conversation/session management
 
 use axum::{
     extract::{State, Path},
@@ -12,13 +11,11 @@ use tracing::{info, error};
 
 use crate::shared_state::UnifiedAppState;
 
-/// Response for fetching all conversations
 #[derive(Debug, Serialize)]
 pub struct ConversationsResponse {
     pub conversations: Vec<ConversationSummary>,
 }
 
-/// Summary of a conversation for the sidebar
 #[derive(Debug, Serialize)]
 pub struct ConversationSummary {
     pub id: String,
@@ -29,7 +26,6 @@ pub struct ConversationSummary {
     pub pinned: bool,
 }
 
-/// Response for fetching a specific conversation's messages
 #[derive(Debug, Serialize)]
 pub struct ConversationDetailResponse {
     pub id: String,
@@ -37,14 +33,12 @@ pub struct ConversationDetailResponse {
     pub messages: Vec<MessageResponse>,
 }
 
-/// Message format for API response
 #[derive(Debug, Serialize)]
 pub struct MessageResponse {
     pub role: String,
     pub content: String,
 }
 
-/// Fetch all conversations/sessions from the database
 pub async fn get_conversations(
     State(state): State<UnifiedAppState>,
 ) -> Result<Json<ConversationsResponse>, Response> {
@@ -58,12 +52,11 @@ pub async fn get_conversations(
                 let mut conversations = Vec::new();
                 
                 for session in sessions {
-                    // Get message count for this session
+                    
                     let message_count = orchestrator.database().conversations
                         .get_session_message_count(&session.id)
                         .unwrap_or(0);
                     
-                    // Include sessions that have a title OR have messages (even if title not generated yet)
                     if let Some(ref title) = session.metadata.title {
                         conversations.push(ConversationSummary {
                             id: session.id.clone(),
@@ -74,7 +67,7 @@ pub async fn get_conversations(
                             pinned: session.metadata.pinned,
                         });
                     } else if message_count > 0 {
-                        // Get first user message for title
+                        
                         let first_message = orchestrator.database().conversations
                             .get_session_messages(&session.id, Some(1), Some(0))
                             .ok()
@@ -116,7 +109,6 @@ pub async fn get_conversations(
     }
 }
 
-/// Fetch a specific conversation's messages
 pub async fn get_conversation(
     State(state): State<UnifiedAppState>,
     Path(session_id): Path<String>,
@@ -126,7 +118,7 @@ pub async fn get_conversation(
     let orchestrator_lock = state.context_orchestrator.read().await;
     
     if let Some(ref orchestrator) = *orchestrator_lock {
-        // Get session metadata
+        
         let session = match orchestrator.database().conversations.get_session(&session_id) {
             Ok(Some(s)) => s,
             Ok(None) => {
@@ -138,7 +130,6 @@ pub async fn get_conversation(
             }
         };
         
-        // Get messages
         let messages = match orchestrator.database().conversations.get_session_messages(&session_id, None, None) {
             Ok(msgs) => msgs.into_iter()
                 .map(|msg| MessageResponse {
@@ -163,13 +154,11 @@ pub async fn get_conversation(
     }
 }
 
-/// Request to update a conversation's title
 #[derive(Debug, Deserialize)]
 pub struct UpdateTitleRequest {
     pub title: String,
 }
 
-/// Update a conversation's title
 pub async fn update_conversation_title(
     State(state): State<UnifiedAppState>,
     Path(session_id): Path<String>,
@@ -194,7 +183,7 @@ pub async fn update_conversation_title(
                 })))
             }
             Err(e) => {
-                // Standardize on 500 so the frontend handles all DB failures uniformly
+                
                 error!("Failed to update conversation title for session {}: {}", session_id, e);
                 Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)).into_response())
             }
@@ -205,9 +194,6 @@ pub async fn update_conversation_title(
     }
 }
 
-/// Delete a conversation permanently from the database
-/// Called via DELETE /conversations/:id from frontend
-/// Returns success JSON or error status code with message
 pub async fn delete_conversation(
     State(state): State<UnifiedAppState>,
     Path(session_id): Path<String>,
@@ -232,7 +218,7 @@ pub async fn delete_conversation(
             }
             Err(e) => {
                 error!("Failed to delete conversation: {}", e);
-                // Return detailed error to help with debugging
+                
                 Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)).into_response())
             }
         }
@@ -242,28 +228,27 @@ pub async fn delete_conversation(
     }
 }
 
-/// DB-level statistics response for the Conversations (memory.db) Tier 4 view
 #[derive(Debug, Serialize)]
 pub struct ConversationsDbStatsResponse {
-    /// Absolute path to memory.db on disk
+    
     pub db_path: String,
-    /// File size in bytes (0 if in-memory DB)
+    
     pub db_size_bytes: u64,
-    /// Human-readable file size
+    
     pub db_size_human: String,
-    /// Total number of chat sessions ever recorded
+    
     pub total_sessions: i64,
-    /// Total messages stored across all sessions
+    
     pub total_messages: i64,
-    /// Total KV snapshots persisted (Tier 2 of the KV cache hierarchy)
+    
     pub total_kv_snapshots: i64,
-    /// Total embedding vectors stored for semantic search
+    
     pub total_embeddings: i64,
-    /// Total detail records (structured facts extracted from conversations)
+    
     pub total_details: i64,
-    /// Total summary records
+    
     pub total_summaries: i64,
-    /// Most recently accessed session timestamp (RFC-3339) or null
+    
     pub last_accessed: Option<String>,
 }
 
@@ -276,7 +261,6 @@ fn format_bytes_local(bytes: u64) -> String {
     format!("{:.1} {}", val, UNITS[i])
 }
 
-/// GET /conversations/db-stats — returns memory.db statistics for the Tier 4 view
 pub async fn get_conversations_db_stats(
     State(state): State<UnifiedAppState>,
 ) -> Result<Json<ConversationsDbStatsResponse>, Response> {
@@ -325,7 +309,6 @@ pub async fn get_conversations_db_stats(
         return Err((StatusCode::SERVICE_UNAVAILABLE, "Memory system not available").into_response());
     };
 
-    // Resolve the DB file path (same logic as thread_server)
     let db_path = dirs::data_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
         .join("Aud.io")
@@ -348,13 +331,11 @@ pub async fn get_conversations_db_stats(
     }))
 }
 
-/// Request to update a conversation's pinned status
 #[derive(Debug, Deserialize)]
 pub struct UpdatePinnedRequest {
     pub pinned: bool,
 }
 
-/// Update a conversation's pinned status
 pub async fn update_conversation_pinned(
     State(state): State<UnifiedAppState>,
     Path(session_id): Path<String>,
@@ -376,7 +357,7 @@ pub async fn update_conversation_pinned(
             }
             Err(e) => {
                 let error_msg = e.to_string();
-                // Check if the error is due to session not found
+                
                 if error_msg.contains("not found") {
                     error!("Conversation not found: {}", session_id);
                     Err((StatusCode::NOT_FOUND, format!("Conversation not found: {}", session_id)).into_response())

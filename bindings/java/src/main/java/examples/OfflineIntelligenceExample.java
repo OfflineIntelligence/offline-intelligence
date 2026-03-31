@@ -4,15 +4,12 @@ import com.offlineintelligence.Config;
 import com.offlineintelligence.Server;
 import com.offlineintelligence.OfflineIntelligenceException;
 
-/**
- * Example usage of Offline Intelligence Java Bindings
- */
 public class OfflineIntelligenceExample {
     public static void main(String[] args) {
         System.out.println("=== Offline Intelligence Java Example ===");
         
         try {
-            // Create configuration from environment
+            
             Config config = Config.fromEnv();
             
             System.out.println("Configuration loaded:");
@@ -22,7 +19,6 @@ public class OfflineIntelligenceExample {
             System.out.println("- Threads: " + config.getThreads());
             System.out.println("- Context Size: " + config.getCtxSize());
             
-            // Start the server
             System.out.println("\nStarting Offline Intelligence server...");
             boolean success = Server.runServer(config);
             

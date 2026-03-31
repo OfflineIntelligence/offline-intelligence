@@ -1,18 +1,9 @@
-//! Model Storage Management
-//!
-//! Handles local storage of models in platform-appropriate locations:
-//! - Windows: %APPDATA%/Aud.io/models
-//! - Linux: ~/.local/share/aud.io/models
-//! - macOS: ~/Library/Application Support/Aud.io/models
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
-/// Sanitize a model ID for use as a filesystem directory/file name.
-/// Replaces characters invalid on Windows (: / \ < > " | ? *) with underscores.
-/// Also trims trailing periods and spaces, handles reserved names, and limits length.
 fn sanitize_model_id(model_id: &str) -> String {
     let mut sanitized = model_id
         .replace(':', "_")

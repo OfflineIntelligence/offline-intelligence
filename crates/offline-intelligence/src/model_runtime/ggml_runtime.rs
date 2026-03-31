@@ -1,11 +1,8 @@
-//! GGML Runtime Adapter (legacy format)
-//! Similar to GGUF but for older llama.cpp GGML models
 
 use async_trait::async_trait;
 use super::gguf_runtime::GGUFRuntime;
 use super::runtime_trait::*;
 
-/// GGML runtime - reuses GGUF runtime implementation since llama-server supports both
 pub struct GGMLRuntime {
     inner: GGUFRuntime,
 }
@@ -31,8 +28,8 @@ impl ModelRuntime for GGMLRuntime {
     }
 
     async fn initialize(&mut self, mut config: RuntimeConfig) -> anyhow::Result<()> {
-        // GGML uses the same llama-server as GGUF
-        config.format = ModelFormat::GGUF; // Internal override
+        
+        config.format = ModelFormat::GGUF; 
         self.inner.initialize(config).await
     }
 

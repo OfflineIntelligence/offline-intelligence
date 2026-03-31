@@ -1,6 +1,6 @@
 [package]
 name = "offline-intelligence"
-version = "0.1.4"
+version = "0.1.5"
 description = "High-performance library for offline AI inference with context management, memory, and thread-based server architecture"
 license = "Apache-2.0"
 repository = "https://github.com/OfflineIntelligence/offline-intelligence"
@@ -65,26 +65,26 @@ tokio-stream = "0.1"
 pin-project-lite = "0.2"
 async-trait = "0.1"
 arc-swap = "1.7"
-# Model management dependencies
+
 dirs = "5.0"
 walkdir = "2.4"
 fs2 = "0.4"
 tempfile = "3.8"
 whoami = "1.5"
-# File processing dependencies - using simpler alternatives to avoid conflicts
+
 base64 = "0.22"
 mime_guess = "2.0"
-# Email / SMTP
+
 lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "smtp-transport"] }
-# Authentication
+
 jsonwebtoken = "9"
 argon2 = "0.5"
 hex = "0.4"
-# Document extraction
+
 calamine = "0.26"
-# Pure-Rust PDF text-layer extraction (text-based PDFs need no OCR)
+
 lopdf = "0.32"
-# PNG encoding for macOS PDF page rendering (passed to Vision as image data)
+
 png = "0.17"
 
 [target.'cfg(target_os = "macos")'.dependencies]

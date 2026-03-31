@@ -5,7 +5,7 @@ int main() {
     std::cout << "=== Offline Intelligence C++ Example ===" << std::endl;
     
     try {
-        // Create configuration from environment
+        
         auto config = offline_intelligence::Config::from_env();
         
         std::cout << "Configuration loaded:" << std::endl;
@@ -15,7 +15,6 @@ int main() {
         std::cout << "- Threads: " << config.threads << std::endl;
         std::cout << "- Context Size: " << config.ctx_size << std::endl;
         
-        // Start the server
         std::cout << "\nStarting Offline Intelligence server..." << std::endl;
         bool success = offline_intelligence::Server::run_server(config);
         

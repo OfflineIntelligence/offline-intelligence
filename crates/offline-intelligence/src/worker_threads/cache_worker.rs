@@ -1,6 +1,3 @@
-//! Cache worker thread implementation
-//!
-//! Handles KV cache operations in a dedicated thread.
 
 use std::sync::Arc;
 use tracing::{info, debug};
@@ -19,7 +16,6 @@ impl CacheWorker {
         Self { shared_state }
     }
     
-    /// Persist cache entries for a session by creating a KV snapshot.
     pub async fn update_cache(
         &self,
         session_id: String,
@@ -42,14 +38,12 @@ impl CacheWorker {
         Ok(())
     }
 
-    /// Retrieve the most-recently persisted KV cache entries for a session.
     pub async fn get_cache_entries(
         &self,
         session_id: &str,
     ) -> anyhow::Result<Vec<KVEntry>> {
         debug!("Cache worker retrieving entries for session: {}", session_id);
 
-        // Look up the latest KV snapshot persisted for this session
         let snapshots = self.shared_state.database_pool
             .get_recent_kv_snapshots(session_id, 1)
             .await?;
@@ -66,7 +60,6 @@ impl CacheWorker {
         }
     }
     
-    /// Create KV snapshot
     pub async fn create_snapshot(
         &self,
         session_id: &str,
@@ -74,7 +67,6 @@ impl CacheWorker {
     ) -> anyhow::Result<i64> {
         debug!("Creating KV snapshot for session: {}", session_id);
         
-        // Use database pool from shared state
         let snapshot_id = self.shared_state.database_pool
             .create_kv_snapshot(session_id, entries)
             .await?;

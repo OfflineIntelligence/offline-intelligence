@@ -1,4 +1,3 @@
-//! Manages the three-tier memory system with robust persistence and indexing
 
 use crate::memory::Message;
 use crate::memory_db::{MemoryDatabase, StoredMessage, SessionMetadata};
@@ -8,11 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
-/// Configuration for tier management
 #[derive(Debug, Clone)]
 pub struct TierManagerConfig {
-    /// Maximum number of messages stored in Tier 1 hot cache per session.
-    /// Derived from CTX_SIZE: 40% of context window / avg 20 tokens per message.
+    
     pub tier1_max_messages: usize,
     pub enable_tier3_persistence: bool,
 }
@@ -27,9 +24,7 @@ impl Default for TierManagerConfig {
 }
 
 impl TierManagerConfig {
-    /// Derive Tier 1 limits from the model's context window.
-    /// 40% of CTX_SIZE is reserved for current-session hot messages.
-    /// Divided by an average of 20 tokens per message to get the message count cap.
+    
     pub fn from_ctx_size(ctx_size: u32) -> Self {
         let tier1_token_budget = (ctx_size as f32 * 0.40) as usize;
         let avg_tokens_per_message = 20;
@@ -40,7 +35,6 @@ impl TierManagerConfig {
     }
 }
 
-/// Statistics about tier usage
 #[derive(Debug, Clone, Default)]
 pub struct TierStats {
     pub tier1_count: usize,
@@ -68,10 +62,8 @@ impl TierManager {
         }
     }
 
-    // --- Tier 1 (Cache) Methods ---
-
     pub async fn store_tier1_content(&self, session_id: &str, messages: &[Message]) {
-        // Apply tier1 max messages limit
+        
         let messages_to_store = if messages.len() > self.config.tier1_max_messages {
             &messages[messages.len() - self.config.tier1_max_messages..]
         } else {
@@ -84,8 +76,6 @@ impl TierManager {
     pub async fn get_tier1_content(&self, session_id: &str) -> Option<Vec<Message>> {
         self.tier1_cache.get(session_id).map(|(m, _)| m)
     }
-
-    // --- Tier 3 (Database) Methods ---
 
     pub async fn get_tier3_content(
         &self, 
@@ -118,15 +108,12 @@ impl TierManager {
             return Ok(());
         }
         
-        // Ensure session exists in database
         self.ensure_session_exists(session_id, None).await?;
         
-        // Get existing messages to find the next index AND check for duplicates
         let existing_messages = self.database.conversations.get_session_messages(
             session_id, Some(10000), Some(0)
         ).unwrap_or_else(|_| vec![]);
         
-        // Filter out messages that already exist (simple content-based deduplication)
         let new_messages: Vec<&Message> = messages.iter()
             .filter(|new_msg| {
                 !existing_messages.iter().any(|existing| {
@@ -138,19 +125,18 @@ impl TierManager {
         
         if new_messages.is_empty() {
             debug!("No new messages to save, all already exist in database");
-            return Ok(()); // Nothing new to save
+            return Ok(()); 
         }
         
         let start_index = existing_messages.len() as i32;
         
-        // Create batch data for ONLY new messages
         let batch_data: Vec<(String, String, i32, i32, f32)> = new_messages
             .iter()
             .enumerate()
             .map(|(offset, m)| (
                 m.role.clone(),
                 m.content.clone(),
-                start_index + offset as i32, // Ensure unique index
+                start_index + offset as i32, 
                 (m.content.len() / 4) as i32,
                 score_message_importance(&m.role, &m.content)
             ))
@@ -164,27 +150,23 @@ impl TierManager {
         Ok(())
     }
 
-    // --- Cross-Session Content Methods ---
-
-    /// Searches across all sessions except the current one based on keyword extraction
     pub async fn search_cross_session_content(
         &self,
         current_session_id: &str,
         query: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<StoredMessage>> {
-        // Extract keywords from query
+        
         let keywords = self.extract_keywords(query);
         
         if keywords.is_empty() {
             return Ok(vec![]);
         }
 
-        // Search across ALL sessions except current one
         self.database.conversations.search_messages_by_topic_across_sessions(
             &keywords,
             limit,
-            Some(current_session_id), // Exclude current session
+            Some(current_session_id), 
         ).await
     }
 
@@ -207,8 +189,6 @@ impl TierManager {
         stop_words.contains(&word)
     }
 
-    // --- Maintenance & Stats ---
-
     pub async fn get_tier_stats(&self, session_id: &str) -> TierStats {
         let tier1_count = self.get_tier1_content(session_id).await
             .map(|m| m.len())
@@ -228,7 +208,6 @@ impl TierManager {
         count as usize
     }
 
-    /// Chat persistence: Ensure session exists in database with provided ID (no auto-generated placeholders)
     pub async fn ensure_session_exists(
         &self, 
         session_id: &str, 
@@ -236,9 +215,9 @@ impl TierManager {
     ) -> anyhow::Result<()> {
         let exists = self.database.conversations.get_session(session_id)?;
         if exists.is_none() {
-            // Create session with null title initially - title set via API after generation
+            
             let metadata = SessionMetadata {
-                title, // None initially; title updated later via update_conversation_title API
+                title, 
                 ..Default::default()
             };
             self.database.conversations.create_session_with_id(session_id, Some(metadata))?;

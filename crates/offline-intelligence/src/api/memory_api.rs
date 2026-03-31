@@ -1,4 +1,3 @@
-//! Memory management API endpoints
 
 use axum::{
     extract::{Path, State},
@@ -14,9 +13,6 @@ use serde::{Deserialize, Serialize};
 use crate::shared_state::SharedState;
 use crate::metrics;
 
-// --- Error Handling ---
-
-/// Custom error type for API validation and processing failures
 #[derive(Debug)]
 pub struct ApiError {
     pub status: StatusCode,
@@ -36,9 +32,6 @@ impl IntoResponse for ApiError {
     }
 }
 
-// --- Validation Helpers ---
-
-/// Validate session ID format (alphanumeric, dashes, underscores)
 fn validate_session_id(session_id: &str) -> Result<(), ApiError> {
     if session_id.is_empty() {
         return Err(ApiError {
@@ -67,7 +60,6 @@ fn validate_session_id(session_id: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Validate the integrity and safety of the message list
 fn validate_messages(messages: &[crate::memory::Message]) -> Result<(), ApiError> {
     if messages.is_empty() {
         return Err(ApiError {
@@ -115,8 +107,6 @@ fn validate_messages(messages: &[crate::memory::Message]) -> Result<(), ApiError
     Ok(())
 }
 
-// --- Response Types (since we can't import from context_engine yet) ---
-
 #[derive(Debug, Serialize)]
 pub struct SessionStats {
     pub total_messages: usize,
@@ -133,14 +123,11 @@ pub struct CleanupStats {
     pub memory_freed_bytes: Option<usize>,
 }
 
-// --- API Handlers ---
-
-/// Optimize conversation context with input validation
 pub async fn memory_optimize(
     State(shared_state): State<Arc<SharedState>>,
     Json(payload): Json<MemoryOptimizeRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // 1. Validation
+    
     validate_session_id(&payload.session_id)?;
     validate_messages(&payload.messages)?;
 
@@ -153,7 +140,6 @@ pub async fn memory_optimize(
         }
     }
 
-    // 2. Process — read lock: process_conversation takes &self, no exclusive access needed
     let orchestrator_guard = shared_state.context_orchestrator.read().await;
 
     if let Some(orchestrator) = &*orchestrator_guard {
@@ -206,7 +192,6 @@ pub async fn memory_optimize(
     }
 }
 
-/// Get memory statistics for a specific session
 pub async fn memory_stats(
     State(shared_state): State<Arc<SharedState>>,
     Path(session_id): Path<String>,
@@ -254,12 +239,11 @@ pub async fn memory_stats(
     }
 }
 
-/// Clean up old memory data within specified time bounds
 pub async fn memory_cleanup(
     State(shared_state): State<Arc<SharedState>>,
     Json(payload): Json<MemoryCleanupRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Range validation: 1 hour to 1 year
+    
     if !(3_600..=31_536_000).contains(&payload.older_than_seconds) {
         return Err(ApiError {
             status: StatusCode::BAD_REQUEST,
@@ -274,8 +258,8 @@ pub async fn memory_cleanup(
             Ok(cleanup_stats) => {
                 let stats = CleanupStats {
                     messages_removed: cleanup_stats.sessions_cleaned + cleanup_stats.cache_entries_cleaned,
-                    final_count: cleanup_stats.sessions_cleaned, // Approximate remaining count
-                    memory_freed_bytes: Some(cleanup_stats.cache_entries_cleaned * 1024), // Estimate 1KB per entry
+                    final_count: cleanup_stats.sessions_cleaned, 
+                    memory_freed_bytes: Some(cleanup_stats.cache_entries_cleaned * 1024), 
                 };
         
         info!("Memory cleanup completed: {:?}", stats);
@@ -299,8 +283,6 @@ pub async fn memory_cleanup(
         })
     }
 }
-
-// --- Data Structures ---
 
 #[derive(Debug, Deserialize)]
 pub struct MemoryOptimizeRequest {

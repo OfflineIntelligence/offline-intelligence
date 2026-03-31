@@ -2,22 +2,6 @@ package com.offlineintelligence;
 
 import java.util.function.Consumer;
 
-/**
- * Main entry-point for the Offline Intelligence Java binding.
- * Version: 0.1.3
- *
- * <p>Combines {@link Config} and {@link Server} into a single convenient client.
- *
- * <pre>{@code
- * Config cfg = Config.fromEnv();
- * OfflineIntelligence ai = new OfflineIntelligence(cfg);
- *
- * System.out.println(ai.healthCheck());
- * System.out.println(ai.generate("Hello, world!"));
- *
- * ai.generateStream("Tell me a story", chunk -> System.out.print(chunk));
- * }</pre>
- */
 public class OfflineIntelligence {
 
     private final Server server;
@@ -28,17 +12,13 @@ public class OfflineIntelligence {
         this.server = new Server(config);
     }
 
-    /** Create with default configuration. */
     public OfflineIntelligence() {
         this(new Config());
     }
 
-    /** Create from environment variables. */
     public static OfflineIntelligence fromEnv() {
         return new OfflineIntelligence(Config.fromEnv());
     }
-
-    // ── Delegation ──────────────────────────────────────────────────────────
 
     public String healthCheck() throws OfflineIntelligenceException {
         return server.healthCheck();
@@ -95,8 +75,6 @@ public class OfflineIntelligence {
     public String cleanupMemory() throws OfflineIntelligenceException {
         return server.cleanupMemory();
     }
-
-    // ── Meta ─────────────────────────────────────────────────────────────────
 
     public Config getConfig() { return config; }
 

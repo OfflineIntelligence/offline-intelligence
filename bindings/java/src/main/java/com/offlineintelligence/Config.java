@@ -1,9 +1,5 @@
 package com.offlineintelligence;
 
-/**
- * Configuration for the Offline Intelligence HTTP client.
- * Version: 0.1.3
- */
 public class Config {
     private String modelPath;
     private String llamaBin;
@@ -53,7 +49,6 @@ public class Config {
         this.queueTimeoutSeconds = 30;
     }
 
-    /** Create a Config populated from environment variables. */
     public static Config fromEnv() {
         Config cfg = new Config();
         String v;
@@ -70,7 +65,6 @@ public class Config {
         return cfg;
     }
 
-    // Getters and setters
     public String getModelPath() { return modelPath; }
     public void setModelPath(String modelPath) { this.modelPath = modelPath; }
 

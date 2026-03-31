@@ -1,7 +1,3 @@
-//! Admin API endpoints
-//! 
-//! This module provides administrative functionality for system management.
-//! Currently a placeholder for future implementation.
 
 use axum::{
     extract::State,
@@ -14,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared_state::SharedState;
 
-/// System health response
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: String,
@@ -22,7 +17,6 @@ pub struct HealthResponse {
     pub uptime_seconds: u64,
 }
 
-/// Database statistics response
 #[derive(Debug, Serialize)]
 pub struct DbStatsResponse {
     pub total_sessions: usize,
@@ -31,15 +25,12 @@ pub struct DbStatsResponse {
     pub database_size_bytes: u64,
 }
 
-/// Maintenance request
 #[derive(Debug, Deserialize)]
 pub struct MaintenanceRequest {
     pub operation: String,
     pub parameters: Option<serde_json::Value>,
 }
 
-
-// Store application start time as seconds since epoch
 static START_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn init_start_time() {
@@ -53,7 +44,7 @@ fn init_start_time() {
 fn get_uptime_seconds() -> u64 {
     let start = START_TIME.load(Ordering::SeqCst);
     if start == 0 {
-        // Initialize on first call
+        
         init_start_time();
         return 0;
     }
@@ -66,11 +57,10 @@ fn get_uptime_seconds() -> u64 {
     now.saturating_sub(start)
 }
 
-/// Health check endpoint
 pub async fn health(
     State(_shared_state): State<Arc<SharedState>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // Initialize start time if not already set
+    
     if START_TIME.load(Ordering::SeqCst) == 0 {
         init_start_time();
     }
@@ -85,21 +75,18 @@ pub async fn health(
     ))
 }
 
-/// Database statistics endpoint
 pub async fn db_stats(
     State(shared_state): State<Arc<SharedState>>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // Access the database to get actual statistics
+    
     let total_sessions = shared_state.conversations.counters.active_sessions.load(Ordering::Relaxed);
     
     let total_messages = shared_state.conversations.counters.processed_messages.load(Ordering::Relaxed);
     
-    // Get cache statistics
     let cache_hits = shared_state.conversations.counters.cache_hits.load(Ordering::Relaxed);
     let cache_misses = shared_state.conversations.counters.cache_misses.load(Ordering::Relaxed);
-    let total_summaries = cache_hits + cache_misses; // Approximation
+    let total_summaries = cache_hits + cache_misses; 
     
-    // Get database file size from the database path
     let database_size_bytes = match std::fs::metadata("data/conversations.db") {
         Ok(metadata) => metadata.len(),
         Err(_) => match std::fs::metadata("conversations.db") {
@@ -119,22 +106,20 @@ pub async fn db_stats(
     ))
 }
 
-/// Maintenance endpoint - performs system maintenance operations
 pub async fn maintenance(
     State(shared_state): State<Arc<SharedState>>,
     Json(payload): Json<MaintenanceRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     match payload.operation.as_str() {
         "cleanup_expired_sessions" => {
-            // Remove sessions from the in-memory DashMap that haven't been accessed
-            // in the last 30 minutes. Database records are kept intact.
+            
             const EXPIRY_SECS: u64 = 30 * 60;
             let initial_count = shared_state.conversations.sessions.len();
 
             shared_state.conversations.sessions.retain(|_, session| {
                 session.read()
                     .map(|data| data.last_accessed.elapsed().as_secs() <= EXPIRY_SECS)
-                    .unwrap_or(true) // keep if lock poisoned
+                    .unwrap_or(true) 
             });
 
             let removed = initial_count.saturating_sub(shared_state.conversations.sessions.len());
@@ -155,8 +140,7 @@ pub async fn maintenance(
             ))
         },
         "optimize_database" => {
-            // Run PRAGMA optimize + WAL checkpoint to reclaim disk space and
-            // update query planner statistics.
+            
             match shared_state.database_pool.optimize() {
                 Ok(()) => Ok((
                     StatusCode::OK,
@@ -177,7 +161,7 @@ pub async fn maintenance(
             }
         },
         "clear_inactive_sessions" => {
-            // More aggressive version: remove sessions idle for more than 5 minutes.
+            
             const INACTIVE_SECS: u64 = 5 * 60;
             let initial_count = shared_state.conversations.sessions.len();
 

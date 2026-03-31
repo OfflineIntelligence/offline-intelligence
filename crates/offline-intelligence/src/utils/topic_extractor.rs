@@ -1,4 +1,3 @@
-//! Common topic extraction utilities
 
 use crate::memory::Message;
 use lazy_static::lazy_static;
@@ -15,7 +14,6 @@ lazy_static! {
     ];
 }
 
-/// Extract topics from text with configurable parameters
 pub struct TopicExtractor {
     max_topics: usize,
     min_word_length: usize,
@@ -38,13 +36,11 @@ impl TopicExtractor {
         }
     }
     
-    /// Extract topics from a single text
     pub fn extract_from_text(&self, text: &str) -> Vec<String> {
         let mut topics = Vec::new();
         let text_lower = text.to_lowercase();
         let words: Vec<&str> = text_lower.split_whitespace().collect();
         
-        // Look for question patterns
         let question_words = ["what", "how", "why", "when", "where", "who", "which"];
         for i in 0..words.len().saturating_sub(1) {
             if question_words.contains(&words[i]) {
@@ -54,7 +50,6 @@ impl TopicExtractor {
                 }
             }
             
-            // Look for "about" pattern
             if words[i] == "about" || words[i] == "regarding" || words[i] == "discussing" {
                 let topic = self.extract_topic_phrase(&words, i + 1, 3);
                 if !topic.is_empty() {
@@ -63,7 +58,6 @@ impl TopicExtractor {
             }
         }
         
-        // Fallback: extract significant words
         if topics.is_empty() {
             let significant: Vec<&str> = words.iter()
                 .filter(|&&word| {
@@ -81,12 +75,10 @@ impl TopicExtractor {
             }
         }
         
-        // Deduplicate and limit
         topics.sort();
         topics.dedup();
         topics.truncate(self.max_topics);
         
-        // Capitalize first letter
         topics.iter_mut().for_each(|topic| {
             if !topic.is_empty() {
                 let mut chars: Vec<char> = topic.chars().collect();
@@ -100,7 +92,6 @@ impl TopicExtractor {
         topics
     }
     
-    /// Extract topics from messages
     pub fn extract_from_messages(&self, messages: &[Message], recent_count: usize) -> Vec<String> {
         let recent_messages: Vec<&Message> = messages.iter()
             .rev()
@@ -113,7 +104,6 @@ impl TopicExtractor {
             all_topics.extend(topics);
         }
         
-        // Deduplicate and limit
         all_topics.sort();
         all_topics.dedup();
         all_topics.truncate(self.max_topics);
@@ -121,7 +111,6 @@ impl TopicExtractor {
         all_topics
     }
     
-    /// Helper to extract topic phrase starting from position
     fn extract_topic_phrase(&self, words: &[&str], start: usize, max_words: usize) -> String {
         let end = (start + max_words).min(words.len());
         if start >= end {
@@ -140,7 +129,6 @@ impl TopicExtractor {
         }
     }
     
-    /// Check if a word is a stop word
     pub fn is_stop_word(word: &str) -> bool {
         STOP_WORDS.contains(&word.to_lowercase().as_str())
     }

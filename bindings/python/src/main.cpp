@@ -5,7 +5,6 @@
 #include <vector>
 #include <memory>
 
-// Forward declarations for the Rust library interface
 namespace offline_intelligence {
     struct Config {
         std::string model_path;
@@ -30,7 +29,6 @@ namespace offline_intelligence {
         uint64_t queue_timeout_seconds;
     };
 
-    // Mock implementation - would call into actual Rust library
     Config Config_from_env() {
         Config cfg;
         cfg.model_path = "default.gguf";
@@ -57,7 +55,7 @@ namespace offline_intelligence {
     }
 
     bool run_server(const Config& cfg) {
-        // Mock implementation - would call actual Rust server
+        
         printf("Starting Offline Intelligence server...\n");
         printf("API Server: %s:%d\n", cfg.api_host.c_str(), cfg.api_port);
         printf("LLM Backend: %s:%d\n", cfg.llama_host.c_str(), cfg.llama_port);

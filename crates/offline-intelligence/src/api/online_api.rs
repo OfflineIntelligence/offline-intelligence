@@ -1,6 +1,3 @@
-//! Online mode API endpoints
-//!
-//! Handles online mode requests that connect directly to external APIs like OpenRouter.
 
 use axum::{
     extract::State,
@@ -21,7 +18,6 @@ use serde_json::Value;
 use crate::memory::Message;
 use crate::shared_state::UnifiedAppState;
 
-/// Request body for online mode streaming
 #[derive(Debug, Deserialize)]
 pub struct OnlineStreamRequest {
     pub model: String,
@@ -33,31 +29,23 @@ pub struct OnlineStreamRequest {
     pub temperature: f32,
     #[serde(default = "default_stream")]
     pub stream: bool,
-    pub api_key: Option<String>, // API key passed from frontend
+    pub api_key: Option<String>, 
 }
 
 fn default_max_tokens() -> u32 { 2000 }
 fn default_temperature() -> f32 { 0.7 }
 fn default_stream() -> bool { true }
 
-/// POST /online/stream — Online mode streaming endpoint
-/// Connects directly to OpenRouter API
 pub async fn online_stream(
     State(state): State<UnifiedAppState>,
     Json(req): Json<OnlineStreamRequest>,
 ) -> Response {
     info!("Online stream request for session: {}", req.session_id);
 
-    // Debug: Log what we received
     debug!("Request api_key present: {}", 
         req.api_key.is_some()
     );
 
-    // Get OpenRouter API key - priority order:
-    // 1. Frontend-passed key (for backward compatibility)
-    // 2. Database stored keys (persisted, synced)
-    // 3. Environment variables
-    // 4. Config file
     let api_key = if let Some(key) = &req.api_key {
         if !key.is_empty() {
             key.clone()
@@ -75,7 +63,6 @@ pub async fn online_stream(
         return (StatusCode::UNAUTHORIZED, "OpenRouter API key not configured. Please add your API key in Settings.").into_response();
     }
 
-    // Prepare messages in OpenRouter format
     let openrouter_messages = req.messages.iter().map(|m| {
         serde_json::json!({
             "role": m.role,
@@ -83,7 +70,6 @@ pub async fn online_stream(
         })
     }).collect::<Vec<_>>();
 
-    // Prepare OpenRouter request
     let openrouter_request = serde_json::json!({
         "model": req.model,
         "messages": openrouter_messages,
@@ -92,7 +78,6 @@ pub async fn online_stream(
         "stream": req.stream,
     });
 
-    // Make request to OpenRouter API
     let client = reqwest::Client::new();
     let response = client
         .post("https://openrouter.ai/api/v1/chat/completions")
@@ -141,7 +126,6 @@ pub async fn online_stream(
                                         return;
                                     }
 
-                                    // Forward the data as-is to the client
                                     yield Ok(Event::default().data(data));
                                 }
                             }

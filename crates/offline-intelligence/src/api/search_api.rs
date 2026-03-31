@@ -1,10 +1,3 @@
-//! Search API endpoints — hybrid semantic + keyword search across conversations.
-//!
-//! When a query comes in:
-//! 1. Generate an embedding for the query via llama-server /v1/embeddings
-//! 2. Search HNSW index for semantically similar messages (cosine similarity)
-//! 3. Fall back to keyword search if embeddings are unavailable
-//! 4. Merge and rank results by combined relevance score
 
 use axum::{
     extract::State,
@@ -18,25 +11,22 @@ use tracing::{info, debug};
 
 use crate::shared_state::SharedState;
 
-/// Search request payload
 #[derive(Debug, Deserialize)]
 pub struct SearchRequest {
     pub query: String,
     pub session_id: Option<String>,
     pub limit: Option<i32>,
-    /// Minimum similarity threshold for semantic results (0.0 - 1.0, default 0.3)
+    
     pub similarity_threshold: Option<f32>,
 }
 
-/// Search response
 #[derive(Debug, Serialize)]
 pub struct SearchResponse {
     pub results: Vec<SearchResult>,
     pub total: usize,
-    pub search_type: String, // "semantic", "keyword", or "hybrid"
+    pub search_type: String, 
 }
 
-/// Individual search result
 #[derive(Debug, Serialize, Clone)]
 pub struct SearchResult {
     pub session_id: String,
@@ -44,10 +34,9 @@ pub struct SearchResult {
     pub content: String,
     pub role: String,
     pub relevance_score: f32,
-    pub search_source: String, // "semantic" or "keyword"
+    pub search_source: String, 
 }
 
-/// Search endpoint handler — hybrid semantic + keyword search
 pub async fn search(
     State(shared_state): State<Arc<SharedState>>,
     Json(payload): Json<SearchRequest>,
@@ -55,7 +44,6 @@ pub async fn search(
     info!("Search request: query='{}', session={:?}, limit={:?}",
           payload.query, payload.session_id, payload.limit);
 
-    // Validate input
     if payload.query.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "Query cannot be empty".to_string()));
     }
@@ -64,33 +52,29 @@ pub async fn search(
     let similarity_threshold = payload.similarity_threshold.unwrap_or(0.3);
 
     let mut all_results: Vec<SearchResult> = Vec::new();
-    let mut search_type = String::from("keyword"); // default
+    let mut search_type = String::from("keyword"); 
 
-    // ── Phase 1: Semantic search via embeddings ──
     let llm_worker = &shared_state.llm_worker;
     let db = &shared_state.database_pool;
 
-    // Try to generate query embedding
     match llm_worker.generate_embeddings(vec![payload.query.clone()]).await {
         Ok(query_embeddings) if !query_embeddings.is_empty() => {
             let query_vec = &query_embeddings[0];
 
-            // Search HNSW index (or linear fallback) for similar message embeddings
             match db.embeddings.find_similar_embeddings(
                 query_vec,
                 "llama-server",
-                (limit * 2) as i32, // fetch extra, we'll filter
+                (limit * 2) as i32, 
                 similarity_threshold,
             ) {
                 Ok(similar_ids) if !similar_ids.is_empty() => {
                     search_type = "semantic".to_string();
                     debug!("Semantic search found {} candidates", similar_ids.len());
 
-                    // Fetch the actual messages for each matching embedding
                     for (message_id, similarity) in &similar_ids {
-                        // Get the message content from DB
+                        
                         if let Ok(Some(session_id_filter)) = get_message_session_id(db, *message_id) {
-                            // If session filter is set, skip messages from other sessions
+                            
                             if let Some(ref filter_sid) = payload.session_id {
                                 if &session_id_filter != filter_sid {
                                     continue;
@@ -125,7 +109,6 @@ pub async fn search(
         }
     }
 
-    // ── Phase 2: Keyword search (always runs as fallback/supplement) ──
     let keywords: Vec<String> = payload.query
         .split_whitespace()
         .filter(|word| word.len() > 2)
@@ -145,7 +128,7 @@ pub async fn search(
                     .collect();
 
                 for msg in stored_messages {
-                    // Skip duplicates already found by semantic search
+                    
                     if semantic_ids.contains(&msg.id) {
                         continue;
                     }
@@ -168,7 +151,6 @@ pub async fn search(
         }
     }
 
-    // ── Phase 3: Sort by relevance and truncate ──
     all_results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap_or(std::cmp::Ordering::Equal));
     all_results.truncate(limit);
 
@@ -182,7 +164,6 @@ pub async fn search(
     }))
 }
 
-/// Calculate keyword relevance score
 fn calculate_relevance(content: &str, keywords: &[String]) -> f32 {
     let content_lower = content.to_lowercase();
     let mut score = 0.0;
@@ -197,7 +178,6 @@ fn calculate_relevance(content: &str, keywords: &[String]) -> f32 {
     score.min(1.0)
 }
 
-/// Helper: get the session_id for a message by its ID
 fn get_message_session_id(
     db: &crate::memory_db::MemoryDatabase,
     message_id: i64,
@@ -215,7 +195,6 @@ fn get_message_session_id(
     }
 }
 
-/// Helper: minimal message data by ID
 struct MinimalMessage {
     content: String,
     role: String,

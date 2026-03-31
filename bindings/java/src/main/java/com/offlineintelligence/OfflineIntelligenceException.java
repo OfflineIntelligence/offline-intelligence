@@ -1,8 +1,5 @@
 package com.offlineintelligence;
 
-/**
- * Exception class for Offline Intelligence errors
- */
 public class OfflineIntelligenceException extends Exception {
     
     public OfflineIntelligenceException(String message) {

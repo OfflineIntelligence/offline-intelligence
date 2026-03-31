@@ -1,11 +1,10 @@
-//! Creates smooth transitions between cached and retrieved content
+
 use tracing::debug;
 
-/// Creates bridging sentences for smooth cache context transitions
 pub struct CacheContextBridge {
     cache_history: Vec<CacheTransition>,
-    _max_history: usize, // Reserved for future adaptive history sizing
-    // Memory limits to prevent unbounded growth
+    _max_history: usize, 
+    
     max_transition_history: usize,
 }
 
@@ -35,7 +34,7 @@ pub struct CacheBridgeStats {
 }
 
 impl CacheContextBridge {
-    /// Create a new cache context bridge
+    
     pub fn new(max_history: usize) -> Self {
         Self {
             cache_history: Vec::new(),
@@ -44,7 +43,6 @@ impl CacheContextBridge {
         }
     }
 
-    /// Create a bridge message when cache is cleared
     pub fn create_clear_bridge(
         &mut self,
         cleared_count: usize,
@@ -70,7 +68,6 @@ impl CacheContextBridge {
         )
     }
 
-    /// Create a bridge message when content is retrieved
     pub fn create_retrieval_bridge(
         &mut self,
         retrieved_count: usize,
@@ -108,7 +105,6 @@ impl CacheContextBridge {
         )
     }
 
-    /// Create a bridge message when cache is restored
     pub fn create_restore_bridge(
         &mut self,
         restored_count: usize,
@@ -155,7 +151,6 @@ impl CacheContextBridge {
         
         self.cache_history.push(transition);
         
-        // Enforce memory limits
         if self.cache_history.len() > self.max_transition_history {
             let excess = self.cache_history.len() - self.max_transition_history;
             self.cache_history.drain(0..excess);
@@ -164,7 +159,6 @@ impl CacheContextBridge {
         debug!("Recorded cache transition: {:?}", transition_type);
     }
 
-    /// Get transition statistics
     pub fn get_stats(&self) -> CacheBridgeStats {
         let total = self.cache_history.len();
         let avg_preserved = if total > 0 {
@@ -182,7 +176,6 @@ impl CacheContextBridge {
         }
     }
 
-    /// Clear transition history
     pub fn clear_history(&mut self) {
         self.cache_history.clear();
         self.cache_history.shrink_to_fit();

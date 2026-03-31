@@ -1,8 +1,3 @@
-//! Engine Download Progress Tracking
-//!
-//! Provides real-time progress tracking specifically for engine downloads.
-//! This is separate from model download tracking to maintain proper type safety
-//! and field naming consistency.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,7 +6,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-/// Status of an engine download
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EngineDownloadStatus {
     Queued,
@@ -46,7 +40,6 @@ impl EngineDownloadStatus {
     }
 }
 
-/// Engine download progress information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineDownloadProgress {
     pub download_id: String,
@@ -80,7 +73,6 @@ impl Default for EngineDownloadProgress {
     }
 }
 
-/// Progress tracker specifically for engine downloads
 pub struct EngineDownloadProgressTracker {
     downloads: Arc<RwLock<HashMap<String, EngineDownloadProgress>>>,
 }
@@ -92,7 +84,6 @@ impl EngineDownloadProgressTracker {
         }
     }
 
-    /// Start tracking a new engine download
     pub async fn start_download(
         &self,
         engine_id: String,
@@ -123,7 +114,6 @@ impl EngineDownloadProgressTracker {
         download_id
     }
 
-    /// Update engine download progress
     pub async fn update_progress(
         &self,
         engine_id: &str,
@@ -138,12 +128,10 @@ impl EngineDownloadProgressTracker {
             progress.status = status;
             progress.error_message = error_message;
 
-            // Calculate percentage
             if progress.total_bytes > 0 {
                 progress.progress_percentage = (bytes_downloaded as f32 / progress.total_bytes as f32) * 100.0;
             }
 
-            // Update completed timestamp if finished
             if progress.status.is_finished() {
                 progress.completed_at = Some(chrono::Utc::now());
             }
@@ -152,7 +140,6 @@ impl EngineDownloadProgressTracker {
         }
     }
 
-    /// Update download status without changing bytes
     pub async fn update_status(
         &self,
         engine_id: &str,
@@ -169,13 +156,11 @@ impl EngineDownloadProgressTracker {
         }
     }
 
-    /// Get current progress for an engine download
     pub async fn get_progress(&self, engine_id: &str) -> Option<EngineDownloadProgress> {
         let downloads = self.downloads.read().await;
         downloads.get(engine_id).cloned()
     }
 
-    /// Get all active engine downloads
     pub async fn get_active_downloads(&self) -> Vec<EngineDownloadProgress> {
         let downloads = self.downloads.read().await;
         downloads.values()
@@ -184,13 +169,11 @@ impl EngineDownloadProgressTracker {
             .collect()
     }
 
-    /// Get all engine downloads (active and completed)
     pub async fn get_all_downloads(&self) -> Vec<EngineDownloadProgress> {
         let downloads = self.downloads.read().await;
         downloads.values().cloned().collect()
     }
 
-    /// Remove a completed/failed download from tracking
     pub async fn remove_download(&self, engine_id: &str) {
         let mut downloads = self.downloads.write().await;
         if let Some(progress) = downloads.get(engine_id) {
@@ -201,7 +184,6 @@ impl EngineDownloadProgressTracker {
         }
     }
 
-    /// Cancel an active download
     pub async fn cancel_download(&self, engine_id: &str) -> bool {
         let mut downloads = self.downloads.write().await;
         if let Some(progress) = downloads.get_mut(engine_id) {
@@ -218,7 +200,6 @@ impl EngineDownloadProgressTracker {
         }
     }
 
-    /// Clean up old completed downloads (call periodically)
     pub async fn cleanup_old_downloads(&self, max_age_hours: i64) {
         let cutoff = chrono::Utc::now() - chrono::Duration::hours(max_age_hours);
         let mut downloads = self.downloads.write().await;
@@ -259,7 +240,6 @@ mod tests {
 
         assert!(!download_id.is_empty());
 
-        // Update progress
         tracker.update_progress("test-engine", 500, EngineDownloadStatus::Downloading, None).await;
         
         let progress = tracker.get_progress("test-engine").await.unwrap();
@@ -284,7 +264,6 @@ mod tests {
         let active = tracker.get_active_downloads().await;
         assert_eq!(active.len(), 1);
 
-        // Complete the download
         tracker.update_progress("active-engine", 1000, EngineDownloadStatus::Completed, None).await;
         
         let active = tracker.get_active_downloads().await;

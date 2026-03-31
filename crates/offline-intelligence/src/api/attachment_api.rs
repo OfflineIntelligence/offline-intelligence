@@ -1,15 +1,3 @@
-//! Pre-extraction endpoint for file attachments.
-//!
-//! `POST /attachments/preprocess` fires background extraction tasks the moment
-//! a user attaches a file — so by the time they hit Send the content is already
-//! cached and injection is zero-overhead.
-//!
-//! Hardware-adaptive concurrency:
-//! - Plain-text formats (code, JSON, CSV, Markdown, …) bypass the semaphore —
-//!   they are just an `fs::read` + UTF-8 decode, essentially free.
-//! - Binary formats (PDF, DOCX, XLSX, PPTX, …) acquire a semaphore permit first.
-//!   The semaphore is sized to `num_cpus / 2` (min 1, max 8) so the LLM server
-//!   is never starved of CPU/RAM on low-spec hardware.
 
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
@@ -19,11 +7,8 @@ use crate::api::stream_api::ChatAttachment;
 use crate::shared_state::{PreExtracted, UnifiedAppState};
 use crate::utils::{extract_content_from_bytes, is_extraction_sentinel};
 
-/// TTL for cached pre-extracted entries (30 minutes).
-/// The background eviction task checks every 5 minutes.
 pub const CACHE_TTL_SECS: u64 = 1_800;
 
-/// Build a stable, unique cache key for an attachment.
 pub fn attachment_cache_key(attach: &ChatAttachment) -> String {
     match attach.source.as_str() {
         "inline" => format!(
@@ -35,8 +20,6 @@ pub fn attachment_cache_key(attach: &ChatAttachment) -> String {
     }
 }
 
-/// Returns `true` for formats that are pure text — just an `fs::read` + UTF-8
-/// decode, no binary parser, no meaningful CPU/RAM pressure.
 fn is_plain_text_format(name: &str) -> bool {
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
     matches!(
@@ -62,19 +45,12 @@ pub struct PreprocessRequest {
 
 #[derive(Debug, Serialize)]
 pub struct PreprocessResponse {
-    /// Files whose extraction was queued in the background.
+    
     pub queued: usize,
-    /// Files already in a fresh (non-stale) cache entry — no work needed.
+    
     pub already_cached: usize,
 }
 
-/// `POST /attachments/preprocess`
-///
-/// Accepts a list of file attachments and immediately spawns background
-/// extraction tasks — one per file. Returns before any extraction completes.
-///
-/// The next `/generate/stream` call for those same files will find the results
-/// in `shared_state.attachment_cache` and skip re-extraction entirely.
 pub async fn preprocess_attachments(
     State(state): State<UnifiedAppState>,
     Json(req): Json<PreprocessRequest>,
@@ -95,13 +71,12 @@ pub async fn preprocess_attachments(
     for attach in req.attachments {
         let key = attachment_cache_key(&attach);
 
-        // Skip if already cached and still fresh.
         if let Some(entry) = state.shared_state.attachment_cache.get(&key) {
             if !entry.is_stale(CACHE_TTL_SECS) {
                 already_cached += 1;
                 continue;
             }
-            // Stale entry — fall through and re-queue.
+            
         }
 
         queued += 1;
@@ -111,9 +86,7 @@ pub async fn preprocess_attachments(
         let is_plain = is_plain_text_format(&attach.name);
 
         tokio::spawn(async move {
-            // Binary files acquire a semaphore permit before starting so that at
-            // most N heavy extractions run concurrently (N = num_cpus / 2, max 8).
-            // Plain-text files bypass the semaphore — they are I/O + decode only.
+            
             let _permit = if is_plain {
                 None
             } else {
@@ -150,12 +123,11 @@ pub async fn preprocess_attachments(
                     );
                 }
                 Err(e) => {
-                    // Silently discard — the error surfaces again at Send time
-                    // via `try_extract_attachment`, which has proper user messages.
+                    
                     warn!("Pre-extraction failed for '{}': {}", attach_clone.name, e);
                 }
             }
-            // `_permit` is dropped here, releasing the semaphore slot.
+            
         });
     }
 
@@ -173,9 +145,6 @@ pub async fn preprocess_attachments(
     )
 }
 
-/// Internal extraction helper for the preprocess path.
-/// Mirrors `try_extract_attachment` but returns `anyhow::Result<String>`
-/// (just the text) instead of the user-facing `Result<(String, String), String>`.
 async fn extract_for_cache(
     attach: &ChatAttachment,
     state: &UnifiedAppState,
@@ -192,8 +161,7 @@ async fn extract_for_cache(
             let text = extract_content_from_bytes(&bytes, &attach.name)
                 .await
                 .map_err(|e| anyhow::anyhow!("extract '{}': {}", attach.name, e))?;
-            // Do not cache sentinel strings — let try_extract_attachment surface the
-            // proper user-facing error at Send time via HTTP 422.
+            
             if is_extraction_sentinel(&text) {
                 return Err(anyhow::anyhow!("extraction failed for '{}' — result is sentinel", attach.name));
             }
@@ -213,7 +181,7 @@ async fn extract_for_cache(
             let text = extract_content_from_bytes(&bytes, &attach.name)
                 .await
                 .map_err(|e| anyhow::anyhow!("extract '{}': {}", attach.name, e))?;
-            // Do not cache sentinel strings.
+            
             if is_extraction_sentinel(&text) {
                 return Err(anyhow::anyhow!("extraction failed for '{}' — result is sentinel", attach.name));
             }

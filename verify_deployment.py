@@ -60,7 +60,6 @@ def verify_rust_deployment():
         if not check_file_exists(filepath, f"Rust {desc}"):
             all_passed = False
     
-    # Check cargo publish dry run
     if all_passed:
         cargo_check = run_command(
             "cargo publish --dry-run --allow-dirty",
@@ -86,7 +85,6 @@ def verify_python_deployment():
         if not check_file_exists(filepath, f"Python {desc}"):
             all_passed = False
     
-    # Check Python package build
     if all_passed:
         build_check = run_command(
             "python setup.py sdist bdist_wheel --dry-run",
@@ -112,7 +110,6 @@ def verify_javascript_deployment():
         if not check_file_exists(filepath, f"JavaScript {desc}"):
             all_passed = False
     
-    # Check npm package validation
     if all_passed:
         npm_check = run_command(
             "npm pack --dry-run",
@@ -138,7 +135,6 @@ def verify_java_deployment():
         if not check_file_exists(filepath, f"Java {desc}"):
             all_passed = False
     
-    # Check Maven build
     if all_passed:
         maven_check = run_command(
             "mvn compile test-compile",
@@ -208,7 +204,6 @@ def create_deployment_report(results):
         "needs_attention": list([k for k, v in results.items() if not v])
     }
     
-    # Save report
     with open("DEPLOYMENT_VERIFICATION_REPORT.json", "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
     
@@ -219,7 +214,6 @@ def main():
     print("🧪 Offline Intelligence Deployment Verification")
     print("=" * 50)
     
-    # Run all verification checks
     results = {
         "rust": verify_rust_deployment(),
         "python": verify_python_deployment(),
@@ -229,10 +223,8 @@ def main():
         "build_system": verify_build_system()
     }
     
-    # Create report
     report = create_deployment_report(results)
     
-    # Display summary
     print("\n" + "=" * 50)
     print("📊 DEPLOYMENT VERIFICATION SUMMARY")
     print("=" * 50)
@@ -251,7 +243,6 @@ def main():
     
     print(f"\n📄 Detailed report saved to: DEPLOYMENT_VERIFICATION_REPORT.json")
     
-    # Return appropriate exit code
     return 0 if report["overall_status"] == "READY" else 1
 
 if __name__ == "__main__":

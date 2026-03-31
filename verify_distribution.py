@@ -49,7 +49,6 @@ def check_lib_exports():
     
     content = lib_path.read_text(encoding='utf-8')
     
-    # Check that private components are commented out
     private_components = ["context_engine", "cache_management"]
     private_found = []
     
@@ -64,7 +63,6 @@ def check_lib_exports():
     else:
         print("✅ Private components properly hidden")
     
-    # Check that core components are exported
     core_components = ["config", "llm_integration", "metrics", "proxy", "admin"]
     missing_exports = []
     

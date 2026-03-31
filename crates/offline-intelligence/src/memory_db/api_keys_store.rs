@@ -1,10 +1,3 @@
-//! API Keys Store — Machine-specific encryption with SQLite storage
-//!
-//! Stores and manages API keys using machine-specific XOR encryption stored directly in SQLite.
-//! No OS keychain, no password prompts, no external dependencies.
-//!
-//! Encryption uses the machine's device name as the key, ensuring that keys can only be
-//! decrypted on the same machine where they were encrypted.
 
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -16,11 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-// ─────────────────────────────────────────────
-// Public types
-// ─────────────────────────────────────────────
-
-/// Identifies which external service a key belongs to.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ApiKeyType {
     HuggingFace,
@@ -44,8 +32,6 @@ impl ApiKeyType {
     }
 }
 
-/// Metadata record stored in SQLite.
-/// `encrypted_value` is always a base64-encoded XOR-encrypted string.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyRecord {
     pub id: i64,
@@ -57,11 +43,6 @@ pub struct ApiKeyRecord {
     pub usage_count: i64,
 }
 
-// ─────────────────────────────────────────────
-// Store
-// ─────────────────────────────────────────────
-
-/// Manages API keys with machine-specific encryption stored in SQLite.
 pub struct ApiKeysStore {
     pool: Arc<Pool<SqliteConnectionManager>>,
 }
@@ -71,9 +52,6 @@ impl ApiKeysStore {
         Self { pool }
     }
 
-    // ── Schema ───────────────────────────────
-
-    /// Create the `api_keys` table if it does not yet exist.
     pub fn initialize_schema(&self) -> Result<()> {
         let conn = self.pool.get()?;
         conn.execute(
@@ -92,16 +70,9 @@ impl ApiKeysStore {
         Ok(())
     }
 
-    // ── Write ────────────────────────────────
-
-    /// Save or update an API key.
-    ///
-    /// Encrypts the plaintext value using machine-specific encryption and stores
-    /// the encrypted value directly in SQLite.
     pub fn save_key(&self, key_type: ApiKeyType, plaintext: &str) -> Result<()> {
         let name = key_type.as_str();
 
-        // Encrypt using machine-specific key
         let encrypted = Encryption::encrypt(plaintext);
         info!("Encrypted API key for: {}", name);
 
@@ -120,18 +91,12 @@ impl ApiKeysStore {
         Ok(())
     }
 
-    // ── Read ─────────────────────────────────
-
-    /// Retrieve the **plaintext** value of an API key.
-    ///
-    /// Decrypts the stored encrypted value using machine-specific encryption.
     pub fn get_key_plaintext(&self, key_type: &ApiKeyType) -> Result<Option<String>> {
         let record = match self.get_key_metadata(key_type)? {
             Some(r) => r,
             None => return Ok(None),
         };
 
-        // Decrypt the stored encrypted value
         match Encryption::decrypt(&record.encrypted_value) {
             Ok(plaintext) => Ok(Some(plaintext)),
             Err(e) => {
@@ -141,7 +106,6 @@ impl ApiKeysStore {
         }
     }
 
-    /// Get the raw SQLite metadata record (does **not** decrypt).
     pub fn get_key_metadata(&self, key_type: &ApiKeyType) -> Result<Option<ApiKeyRecord>> {
         let conn = self.pool.get()?;
         let name = key_type.as_str();
@@ -173,7 +137,6 @@ impl ApiKeysStore {
         Ok(row)
     }
 
-    /// Get all API keys (encrypted values).
     pub fn get_all_keys(&self) -> Result<Vec<ApiKeyRecord>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
@@ -205,7 +168,6 @@ impl ApiKeysStore {
         Ok(result)
     }
 
-    /// Get all API keys with their plaintext values (decrypted).
     pub fn get_all_keys_with_values(&self) -> Result<Vec<(ApiKeyRecord, String)>> {
         let keys = self.get_all_keys()?;
         let mut result = Vec::new();
@@ -220,7 +182,6 @@ impl ApiKeysStore {
         Ok(result)
     }
 
-    /// Check if an API key exists (without decrypting it).
     pub fn key_exists(&self, key_type: &ApiKeyType) -> Result<bool> {
         let conn = self.pool.get()?;
         let name = key_type.as_str();
@@ -232,9 +193,6 @@ impl ApiKeysStore {
         Ok(count > 0)
     }
 
-    // ── Update ───────────────────────────────
-
-    /// Mark an API key as used (update last_used_at and usage_count).
     pub fn mark_used(&self, key_type: ApiKeyType, mode: &str) -> Result<()> {
         let conn = self.pool.get()?;
         let name = key_type.as_str();
@@ -248,9 +206,6 @@ impl ApiKeysStore {
         Ok(())
     }
 
-    // ── Delete ───────────────────────────────
-
-    /// Delete an API key from storage.
     pub fn delete_key(&self, key_type: ApiKeyType) -> Result<bool> {
         let conn = self.pool.get()?;
         let name = key_type.as_str();
@@ -261,13 +216,6 @@ impl ApiKeysStore {
     }
 }
 
-// ─────────────────────────────────────────────
-// Simple machine-specific XOR encryption
-// ─────────────────────────────────────────────
-
-/// Machine-specific XOR encryption for API keys.
-/// Uses the device name as the encryption key.
-/// Keys can only be decrypted on the same machine where they were encrypted.
 pub struct Encryption;
 
 impl Encryption {
@@ -281,8 +229,6 @@ impl Encryption {
         key
     }
 
-    /// Encrypt plaintext using machine-specific XOR encryption.
-    /// Returns base64-encoded ciphertext.
     pub fn encrypt(plaintext: &str) -> String {
         let key = Self::get_machine_key();
         let encrypted: Vec<u8> = plaintext
@@ -294,7 +240,6 @@ impl Encryption {
         BASE64.encode(&encrypted)
     }
 
-    /// Decrypt base64-encoded ciphertext using machine-specific XOR encryption.
     pub fn decrypt(ciphertext: &str) -> Result<String> {
         let key = Self::get_machine_key();
         let bytes = BASE64
@@ -325,7 +270,7 @@ mod tests {
     fn test_encrypt_different_output() {
         let key1 = Encryption::encrypt("test_key");
         let key2 = Encryption::encrypt("test_key");
-        // Same input should produce same output on same machine
+        
         assert_eq!(key1, key2);
     }
 }

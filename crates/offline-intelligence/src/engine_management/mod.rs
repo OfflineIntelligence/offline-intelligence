@@ -1,12 +1,3 @@
-//! Engine Management System
-//!
-//! Provides comprehensive llama.cpp engine lifecycle management including:
-//! - Hardware capability detection and analysis
-//! - Engine registry and metadata storage
-//! - Download from official llama.cpp releases
-//! - Local engine storage management
-//! - Automatic engine selection based on hardware
-//! - Cross-platform compatibility (Windows, macOS, Linux)
 
 pub mod registry;
 pub mod downloader;
@@ -25,7 +16,6 @@ use tokio::sync::RwLock;
 use crate::config::Config;
 use crate::model_runtime::platform_detector::HardwareCapabilities;
 
-/// Main engine management service
 pub struct EngineManager {
     pub registry: Arc<RwLock<EngineRegistry>>,
     pub downloader: Arc<EngineDownloader>,
@@ -48,30 +38,25 @@ impl EngineManager {
         })
     }
 
-    /// Initialize the engine manager and ensure a suitable engine is available
     pub async fn initialize(&self, _cfg: &Config) -> Result<bool> {
-        // Scan for existing engines and populate registry
-        // This also refreshes available engines from official sources
+        
         {
             let mut registry = self.registry.write().await;
             registry.scan_installed_engines(&self.hardware_capabilities).await?;
         }
 
-        // Check if we have any installed engines at all (first run detection)
         let installed_engines_count = self.registry.read().await.installed_engines.len();
 
         if installed_engines_count == 0 {
             tracing::info!("First run detected - no engines installed, automatically downloading most compatible engine");
 
-            // Block startup for up to 600 seconds (10 minutes) waiting for engine download
-            // This ensures first-run experience completes engine setup before allowing app usage
             match tokio::time::timeout(
                 std::time::Duration::from_secs(600),
                 self.download_suitable_engine()
             ).await {
                 Ok(Ok(engine)) => {
                     tracing::info!("✅ Engine downloaded successfully on first run: {}", engine.name);
-                    // Set newly downloaded engine as default
+                    
                     let mut reg = self.registry.write().await;
                     if let Some(first_engine_id) = reg.installed_engines.keys().next().cloned() {
                         reg.set_default_engine(&first_engine_id)?;
@@ -80,7 +65,7 @@ impl EngineManager {
                 }
                 Ok(Err(e)) => {
                     tracing::warn!("⚠️ Engine download failed: {}. App will continue but models won't work until engine is downloaded.", e);
-                    return Ok(false); // Return false to signal engine unavailable
+                    return Ok(false); 
                 }
                 Err(_) => {
                     tracing::warn!("⚠️ Engine download timed out after 600 seconds (10 minutes). App will continue with background retry.");
@@ -88,7 +73,7 @@ impl EngineManager {
                 }
             }
         } else {
-            // Check if we have a suitable installed engine for current hardware
+            
             let has_suitable_engine = self.check_suitable_engine().await?;
 
             if !has_suitable_engine {
@@ -98,17 +83,16 @@ impl EngineManager {
                 match self.download_suitable_engine().await {
                     Ok(engine) => {
                         tracing::info!("Automatically installed engine: {}", engine.name);
-                        // Set the newly installed engine as default
+                        
                         self.registry.write().await.set_default_engine(&engine.id)?;
                     }
                     Err(e) => {
                         tracing::warn!("Failed to automatically install suitable engine: {}", e);
-                        // Still return true - the manager is functional, just no suitable engines installed
-                        // Users can download engines through the UI
+                        
                     }
                 }
             } else {
-                // Set the best available engine as default
+                
                 self.select_best_engine().await?;
             }
         }
@@ -116,14 +100,12 @@ impl EngineManager {
         Ok(true)
     }
 
-    /// Check if we have an engine suitable for current hardware
     pub async fn check_suitable_engine(&self) -> Result<bool> {
         let registry = self.registry.read().await;
         let suitable_engines = registry.get_compatible_engines(&self.hardware_capabilities);
         Ok(!suitable_engines.is_empty())
     }
 
-    /// Select and set the best engine for current hardware as default
     pub async fn select_best_engine(&self) -> Result<Option<EngineInfo>> {
         let mut registry = self.registry.write().await;
         let best_engine = registry.select_best_compatible_engine(&self.hardware_capabilities);
@@ -137,9 +119,8 @@ impl EngineManager {
         Ok(best_engine)
     }
 
-    /// Download and install a suitable engine for current hardware
     pub async fn download_suitable_engine(&self) -> Result<EngineInfo> {
-        // Check if another download is already in progress
+        
         let can_start = {
             let registry = self.registry.read().await;
             registry.mark_download_started()
@@ -157,7 +138,6 @@ impl EngineManager {
 
         tracing::info!("Downloading recommended engine: {}", recommended_engine.name);
 
-        // Update registry to show this engine is being downloaded
         {
             let mut registry = self.registry.write().await;
             let mut engine_to_download = recommended_engine.clone();
@@ -165,36 +145,28 @@ impl EngineManager {
             registry.add_installed_engine(engine_to_download).await?;
         }
 
-        // Perform the download
         let download_result = self.downloader.download_engine(&recommended_engine).await;
 
-        // Mark download as finished regardless of success/failure
         {
             let registry = self.registry.read().await;
             registry.mark_download_finished();
         }
 
-        // Now handle the download result
         let engine = download_result?;
         self.registry.write().await.add_installed_engine(engine.clone()).await?;
 
         Ok(engine)
     }
 
-    /// Ensures an engine is available, downloading if necessary.
-    /// This method is designed for automatic recovery scenarios.
-    /// Returns Ok(true) if engine is available, Ok(false) if download failed.
     pub async fn ensure_engine_available(&self) -> Result<bool> {
         let registry = self.registry.read().await;
 
-        // Check if we have a working engine installed
         if registry.has_installed_engine() {
             return Ok(true);
         }
 
-        drop(registry); // Release read lock before downloading
+        drop(registry); 
 
-        // No engine found - download one
         tracing::info!("No engine available, downloading suitable engine...");
         match self.download_suitable_engine().await {
             Ok(_) => {
@@ -208,19 +180,16 @@ impl EngineManager {
         }
     }
 
-    /// Get information about current hardware capabilities
     pub fn get_hardware_info(&self) -> &HardwareCapabilities {
         &self.hardware_capabilities
     }
 
-    /// Refresh available engines from remote sources
     pub async fn refresh_available_engines(&self) -> Result<()> {
         let mut registry = self.registry.write().await;
         registry.refresh_available_engines(&self.hardware_capabilities).await?;
         Ok(())
     }
 
-    /// Get detailed status information about the engine manager
     pub async fn get_status_info(&self) -> String {
         let registry = self.registry.read().await;
         let installed_count = registry.installed_engines.len();
@@ -239,7 +208,6 @@ impl EngineManager {
         )
     }
     
-    /// Install a specific engine by ID
     pub async fn install_engine_by_id(&self, engine_id: &str) -> Result<EngineInfo> {
         let registry = self.registry.read().await;
         let engine_to_install = registry.available_engines.iter()
@@ -248,7 +216,7 @@ impl EngineManager {
 
         match engine_to_install {
             Some(engine_info) => {
-                drop(registry); // Release read lock before downloading
+                drop(registry); 
                 let installed_engine = self.downloader.download_engine(&engine_info).await?;
                 self.registry.write().await.add_installed_engine(installed_engine.clone()).await?;
                 Ok(installed_engine)

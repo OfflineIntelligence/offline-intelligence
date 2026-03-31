@@ -50,8 +50,6 @@ class OfflineIntelligence {
         this.baseUrl = `http://${this.config.apiHost}:${this.config.apiPort}`;
     }
 
-    // ── Health & Status ──────────────────────────────────────────────────────
-
     async healthCheck() {
         try {
             const response = await axios.get(`${this.baseUrl}/healthz`);
@@ -69,8 +67,6 @@ class OfflineIntelligence {
             throw new Error(`Status check failed: ${error.message}`);
         }
     }
-
-    // ── Model Management ────────────────────────────────────────────────────
 
     async loadModel(modelPath) {
         try {
@@ -91,8 +87,6 @@ class OfflineIntelligence {
             throw new Error(`Model stop failed: ${error.message}`);
         }
     }
-
-    // ── Generation ──────────────────────────────────────────────────────────
 
     async generate(prompt, options = {}) {
         try {
@@ -119,8 +113,6 @@ class OfflineIntelligence {
             throw new Error(`Stream generation failed: ${error.message}`);
         }
     }
-
-    // ── Conversations ────────────────────────────────────────────────────────
 
     async getConversations() {
         try {
@@ -170,8 +162,6 @@ class OfflineIntelligence {
         }
     }
 
-    // ── Memory ───────────────────────────────────────────────────────────────
-
     async getMemoryStats(sessionId) {
         try {
             const response = await axios.get(`${this.baseUrl}/memory/stats/${sessionId}`);
@@ -198,8 +188,6 @@ class OfflineIntelligence {
             throw new Error(`Memory cleanup failed: ${error.message}`);
         }
     }
-
-    // ── Version ──────────────────────────────────────────────────────────────
 
     static version() {
         return VERSION;

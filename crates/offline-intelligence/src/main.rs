@@ -1,4 +1,3 @@
-// _Aud.io/offline-intelligence/crates/src/main.rs
 
 use offline_intelligence::{config::Config, run_thread_server};
 use dotenvy::dotenv;

@@ -1,8 +1,3 @@
-//! Mode Management API Endpoints
-//!
-//! Handles switching between online/offline modes:
-//! - Offline: Uses local llama.cpp engine + downloaded HuggingFace models
-//! - Online: Uses OpenRouter API for inference
 
 use axum::{
     extract::State,
@@ -18,29 +13,25 @@ use crate::{
     shared_state::UnifiedAppState,
 };
 
-/// Request to switch mode
 #[derive(Debug, Deserialize)]
 pub struct SwitchModeRequest {
-    pub mode: String,  // "offline" or "online"
+    pub mode: String,  
 }
 
-/// Response after switching mode
 #[derive(Debug, Serialize)]
 pub struct SwitchModeResponse {
     pub success: bool,
     pub mode: String,
-    pub engine_status: String,  // "running", "stopped", "unavailable"
+    pub engine_status: String,  
     pub message: String,
-    /// True when the user has no OpenRouter API key stored and needs to add one.
-    /// Frontend should show the API key modal when this is true.
+    
     #[serde(default)]
     pub requires_api_key: bool,
 }
 
-/// Get current mode status
 #[derive(Debug, Serialize)]
 pub struct ModeStatusResponse {
-    pub current_mode: String,  // Inferred from runtime state
+    pub current_mode: String,  
     pub engine_available: bool,
     pub engine_status: String,
     pub hf_token_set: bool,
@@ -49,7 +40,6 @@ pub struct ModeStatusResponse {
     pub openrouter_models_count: usize,
 }
 
-/// Switch between online/offline modes
 pub async fn switch_mode(
     State(state): State<UnifiedAppState>,
     Json(payload): Json<SwitchModeRequest>,
@@ -60,7 +50,6 @@ pub async fn switch_mode(
         "offline" => {
             info!("Switching to OFFLINE mode - starting local engine");
 
-            // Check if engine is available
             let engine_available = state.shared_state.engine_available.load(std::sync::atomic::Ordering::Relaxed);
             if !engine_available {
                 return Ok(Json(SwitchModeResponse {
@@ -72,12 +61,10 @@ pub async fn switch_mode(
                 }));
             }
 
-            // Mark HuggingFace key as used in offline mode (if exists)
             if let Ok(Some(_)) = state.shared_state.database_pool.api_keys.get_key_plaintext(&ApiKeyType::HuggingFace) {
                 let _ = state.shared_state.database_pool.api_keys.mark_used(ApiKeyType::HuggingFace, "offline");
             }
 
-            // Runtime should already be running - just verify
             let runtime_manager = {
                 let guard = state.shared_state.runtime_manager.read()
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -106,20 +93,16 @@ pub async fn switch_mode(
         "online" => {
             info!("Switching to ONLINE mode - using OpenRouter API");
 
-            // Check if an OpenRouter key is stored; signal the frontend when missing
             let openrouter_key_exists = state.shared_state.database_pool.api_keys
                 .get_key_plaintext(&ApiKeyType::OpenRouter)
                 .ok()
                 .flatten()
                 .is_some();
 
-            // Mark OpenRouter key as used in online mode (if exists)
             if openrouter_key_exists {
                 let _ = state.shared_state.database_pool.api_keys.mark_used(ApiKeyType::OpenRouter, "online");
             }
 
-            // In online mode, we optionally stop the runtime to save resources
-            // But keep it simple for now - just acknowledge the mode switch
             Ok(Json(SwitchModeResponse {
                 success: true,
                 mode: "online".to_string(),
@@ -136,14 +119,12 @@ pub async fn switch_mode(
     }
 }
 
-/// Get current mode status
 pub async fn get_mode_status(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // Check engine availability
+    
     let engine_available = state.shared_state.engine_available.load(std::sync::atomic::Ordering::Relaxed);
 
-    // Check if runtime is running
     let runtime_manager = {
         let guard = state.shared_state.runtime_manager.read()
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -160,14 +141,12 @@ pub async fn get_mode_status(
         "unavailable"
     };
 
-    // Infer current mode based on runtime state
     let current_mode = if engine_status == "running" {
         "offline"
     } else {
-        "online"  // Default to online if engine not running
+        "online"  
     };
 
-    // Check if API keys are set
     let hf_token_set = state.shared_state.database_pool.api_keys
         .get_key_plaintext(&ApiKeyType::HuggingFace)
         .ok()
@@ -180,7 +159,6 @@ pub async fn get_mode_status(
         .flatten()
         .is_some();
 
-    // Count models
     let (installed_models_count, openrouter_models_count) = if let Some(ref model_manager) = state.shared_state.model_manager {
         let registry = model_manager.registry.read().await;
         let all_models = registry.list_models();

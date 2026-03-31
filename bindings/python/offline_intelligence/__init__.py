@@ -23,21 +23,11 @@ except ImportError as e:
 __version__ = "0.1.4"
 __all__ = ["Config", "OfflineIntelligence", "OfflineIntelligenceException"]
 
-
-# ---------------------------------------------------------------------------
-# Exception
-# ---------------------------------------------------------------------------
-
 class OfflineIntelligenceException(Exception):
     """Raised when the Offline Intelligence server returns an error."""
     def __init__(self, message: str, status_code: Optional[int] = None):
         super().__init__(message)
         self.status_code = status_code
-
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 
 class Config:
     """Configuration for the Offline Intelligence HTTP client."""
@@ -98,11 +88,6 @@ class Config:
             f"model_path={self.model_path!r})"
         )
 
-
-# ---------------------------------------------------------------------------
-# Main Client
-# ---------------------------------------------------------------------------
-
 class OfflineIntelligence:
     """
     HTTP client for the Offline Intelligence server.
@@ -157,8 +142,6 @@ class OfflineIntelligence:
         except requests.RequestException as e:
             raise OfflineIntelligenceException(str(e))
 
-    # ── Health & Status ────────────────────────────────────────────────────
-
     def health_check(self) -> Dict:
         """GET /healthz — returns server health status."""
         return self._get("/healthz")
@@ -167,8 +150,6 @@ class OfflineIntelligence:
         """GET /admin/status — returns engine/model status."""
         return self._get("/admin/status")
 
-    # ── Model Management ───────────────────────────────────────────────────
-
     def load_model(self, model_path: str) -> Dict:
         """POST /admin/load — load a model by path."""
         return self._post("/admin/load", {"model_path": model_path})
@@ -176,8 +157,6 @@ class OfflineIntelligence:
     def stop_model(self) -> Dict:
         """POST /admin/stop — stop the running model."""
         return self._post("/admin/stop")
-
-    # ── Generation ─────────────────────────────────────────────────────────
 
     def generate(self, prompt: str, **options: Any) -> Dict:
         """POST /generate — generate a response (non-streaming)."""
@@ -214,7 +193,7 @@ class OfflineIntelligence:
                             return
                         try:
                             payload = json.loads(data)
-                            # OpenAI-compatible format
+
                             if "choices" in payload:
                                 delta = payload["choices"][0].get("delta", {})
                                 content = delta.get("content", "")
@@ -228,8 +207,6 @@ class OfflineIntelligence:
             raise OfflineIntelligenceException(str(e), e.response.status_code if e.response else None)
         except requests.RequestException as e:
             raise OfflineIntelligenceException(str(e))
-
-    # ── Conversations ──────────────────────────────────────────────────────
 
     def get_conversations(self) -> Dict:
         """GET /conversations — list all conversations."""
@@ -254,8 +231,6 @@ class OfflineIntelligence:
             "first_message": first_message,
         })
 
-    # ── Memory ─────────────────────────────────────────────────────────────
-
     def get_memory_stats(self, session_id: str) -> Dict:
         """GET /memory/stats/{session_id} — get memory statistics."""
         return self._get(f"/memory/stats/{session_id}")
@@ -267,8 +242,6 @@ class OfflineIntelligence:
     def cleanup_memory(self) -> Dict:
         """POST /memory/cleanup — clean up stale memory entries."""
         return self._post("/memory/cleanup")
-
-    # ── Version ────────────────────────────────────────────────────────────
 
     @staticmethod
     def version() -> str:

@@ -1,5 +1,3 @@
-// "D:\_ProjectWorks\AUDIO_Interface\Server\src\memory_db\summary_store.rs"
-//! Summary storage and retrieval operations
 
 use crate::memory_db::schema::*;
 use rusqlite::{params, Result, Row};
@@ -9,24 +7,21 @@ use std::sync::Arc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 
-/// Manages summary storage and retrieval
 pub struct SummaryStore {
     pool: Arc<Pool<SqliteConnectionManager>>,
 }
 
 impl SummaryStore {
-    /// Create a new summary store
+    
     pub fn new(pool: Arc<Pool<SqliteConnectionManager>>) -> Self {
         Self { pool }
     }
 
-    /// Internal helper to get a connection
     fn get_conn(&self) -> anyhow::Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get()
             .map_err(|e| anyhow::anyhow!("Failed to get connection from pool: {}", e))
     }
 
-    /// Store a summary
     pub fn store_summary(&self, summary: &Summary) -> anyhow::Result<()> {
         let conn = self.get_conn()?;
         
@@ -56,7 +51,6 @@ impl SummaryStore {
         Ok(())
     }
 
-    /// Get summaries for a session
     pub fn get_session_summaries(&self, session_id: &str) -> anyhow::Result<Vec<Summary>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
@@ -75,7 +69,6 @@ impl SummaryStore {
         Ok(summaries)
     }
 
-    /// Get summary for a specific message range
     pub fn get_summary_for_range(&self, session_id: &str, start: i32, end: i32) -> anyhow::Result<Option<Summary>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
@@ -93,7 +86,6 @@ impl SummaryStore {
         }
     }
 
-    /// Update an existing summary
     pub fn update_summary(&self, summary: &Summary) -> anyhow::Result<()> {
         let conn = self.get_conn()?;
         
@@ -118,7 +110,6 @@ impl SummaryStore {
         Ok(())
     }
 
-    /// Delete summaries for a session
     pub fn delete_session_summaries(&self, session_id: &str) -> anyhow::Result<usize> {
         let conn = self.get_conn()?;
         let deleted = conn.execute(
@@ -130,11 +121,9 @@ impl SummaryStore {
         Ok(deleted)
     }
 
-    /// Clean up old summaries for a session
     pub fn cleanup_old_summaries(&self, session_id: &str, keep_latest: usize) -> anyhow::Result<usize> {
         let conn = self.get_conn()?;
         
-        // Get IDs of summaries to delete - FIXED: use rusqlite::params for mixed types
         let mut stmt = conn.prepare(
             "SELECT id FROM summaries 
              WHERE session_id = ?1 
@@ -142,7 +131,6 @@ impl SummaryStore {
              LIMIT -1 OFFSET ?2"
         )?;
         
-        // Use params! macro for mixed types
         let ids_to_delete: Vec<i64> = stmt
             .query_map(params![session_id, keep_latest as i64], |row| row.get(0))?
             .collect::<Result<Vec<_>>>()?;
@@ -151,7 +139,6 @@ impl SummaryStore {
             return Ok(0);
         }
         
-        // Create placeholders for the IN clause
         let placeholders: Vec<String> = ids_to_delete.iter().map(|_| "?".to_string()).collect();
         let query = format!(
             "DELETE FROM summaries WHERE id IN ({})",
@@ -165,7 +152,6 @@ impl SummaryStore {
         Ok(deleted)
     }
 
-    /// Convert a database row to a Summary struct
     fn row_to_summary(&self, row: &Row) -> anyhow::Result<Summary> {
         let key_topics_json: String = row.get(6)?;
         let key_topics: Vec<String> = serde_json::from_str(&key_topics_json)

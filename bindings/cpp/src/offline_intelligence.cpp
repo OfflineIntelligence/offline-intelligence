@@ -39,11 +39,6 @@ bool Server::run_server(const Config& config) {
         std::cout << "Threads: " << config.threads << std::endl;
         std::cout << "GPU Layers: " << config.gpu_layers << std::endl;
         
-        // In a real implementation, this would:
-        // 1. Initialize the Rust library
-        // 2. Start the HTTP server
-        // 3. Begin processing requests
-        
         return true;
     } catch (const std::exception& e) {
         throw OfflineIntelligenceException(std::string("Failed to start server: ") + e.what());
@@ -54,4 +49,4 @@ std::string Server::version() {
     return "0.1.0";
 }
 
-} // namespace offline_intelligence
+} 

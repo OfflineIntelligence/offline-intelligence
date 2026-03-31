@@ -1,6 +1,3 @@
-//! Context worker thread implementation
-//!
-//! Handles conversation context optimization and management in a dedicated thread.
 
 use std::sync::Arc;
 use tracing::{info, debug, warn};
@@ -19,7 +16,6 @@ impl ContextWorker {
         Self { shared_state }
     }
 
-    /// Process conversation context optimization
     pub async fn process_conversation(
         &self,
         session_id: String,
@@ -28,7 +24,6 @@ impl ContextWorker {
     ) -> anyhow::Result<Vec<Message>> {
         debug!("Context worker processing conversation for session: {}", session_id);
 
-        // Access context orchestrator through shared state (tokio RwLock)
         let orchestrator_guard = self.shared_state.context_orchestrator.read().await;
 
         if let Some(ref orchestrator) = *orchestrator_guard {
@@ -48,7 +43,6 @@ impl ContextWorker {
         }
     }
 
-    /// Save assistant response to database
     pub async fn save_assistant_response(
         &self,
         session_id: &str,
@@ -65,7 +59,6 @@ impl ContextWorker {
         Ok(())
     }
 
-    /// Ensure session exists in database
     pub async fn ensure_session_exists(
         &self,
         session_id: &str,

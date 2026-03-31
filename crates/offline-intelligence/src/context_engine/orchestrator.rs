@@ -1,4 +1,3 @@
-//! Main orchestrator that coordinates all memory subsystems
 
 use crate::memory::Message;
 use crate::memory_db::MemoryDatabase;
@@ -15,20 +14,18 @@ use std::sync::Arc;
 use tracing::{info, debug, warn};
 use tokio::sync::RwLock;
 
-/// Main orchestrator for the context engine
 pub struct ContextOrchestrator {
     database: Arc<MemoryDatabase>,
     retrieval_planner: Arc<RwLock<RetrievalPlanner>>,
     tier_manager: Arc<RwLock<TierManager>>,
     context_builder: Arc<RwLock<ContextBuilder>>,
     config: OrchestratorConfig,
-    /// LLM worker for generating query embeddings during semantic search
+    
     llm_worker: Option<Arc<LLMWorker>>,
-    /// Smart retrieval for optimized context assembly
+    
     smart_retrieval: Option<Arc<SmartRetrieval>>,
 }
 
-/// Configuration for the orchestrator
 #[derive(Debug, Clone)]
 pub struct OrchestratorConfig {
     pub enabled: bool,
@@ -36,11 +33,11 @@ pub struct OrchestratorConfig {
     pub auto_optimize: bool,
     pub enable_metrics: bool,
     pub session_timeout_seconds: u64,
-    /// Enable smart retrieval optimization (default: true)
+    
     pub enable_smart_retrieval: bool,
-    /// Smart retrieval configuration
+    
     pub smart_retrieval_config: SmartRetrievalConfig,
-    /// Model context window size in tokens — 0 means not set (use defaults)
+    
     pub ctx_size: u32,
 }
 
@@ -52,7 +49,7 @@ impl Default for OrchestratorConfig {
             auto_optimize: true,
             enable_metrics: true,
             session_timeout_seconds: 3600,
-            enable_smart_retrieval: true,  // Enable by default for production
+            enable_smart_retrieval: true,  
             smart_retrieval_config: SmartRetrievalConfig::default(),
             ctx_size: 0,
         }
@@ -60,9 +57,7 @@ impl Default for OrchestratorConfig {
 }
 
 impl OrchestratorConfig {
-    /// Derive token limits from the model's context window.
-    /// 75% of CTX_SIZE is the ceiling for the total context sent to the LLM,
-    /// leaving 25% headroom for the model's own generation output.
+    
     pub fn from_ctx_size(ctx_size: u32) -> Self {
         let max_context_tokens = (ctx_size as f32 * 0.75) as usize;
         Self {
@@ -75,15 +70,14 @@ impl OrchestratorConfig {
 }
 
 impl ContextOrchestrator {
-    /// Create a new context orchestrator
+    
     pub async fn new(
         database: Arc<MemoryDatabase>,
         config: OrchestratorConfig,
     ) -> anyhow::Result<Self> {
-        // Create retrieval planner wrapped in Arc<RwLock>
+        
         let retrieval_planner = Arc::new(RwLock::new(RetrievalPlanner::new(database.clone())));
         
-        // Create tier manager — derive limits from ctx_size if available
         let tier_manager_config = if config.ctx_size > 0 {
             TierManagerConfig::from_ctx_size(config.ctx_size)
         } else {
@@ -95,7 +89,6 @@ impl ContextOrchestrator {
         );
         let tier_manager = Arc::new(RwLock::new(tier_manager));
 
-        // Create context builder — derive limits from ctx_size if available
         let context_builder_config = if config.ctx_size > 0 {
             ContextBuilderConfig::from_ctx_size(config.ctx_size)
         } else {
@@ -103,7 +96,6 @@ impl ContextOrchestrator {
         };
         let context_builder = Arc::new(RwLock::new(ContextBuilder::new(context_builder_config)));
         
-        // Initialize smart retrieval if enabled
         let smart_retrieval = if config.enable_smart_retrieval {
             let smart_ret = SmartRetrieval::new(
                 Arc::clone(&tier_manager),
@@ -131,18 +123,15 @@ impl ContextOrchestrator {
         Ok(orchestrator)
     }
 
-    /// Set the LLM worker for embedding-based semantic search
     pub fn set_llm_worker(&mut self, worker: Arc<LLMWorker>) {
         self.llm_worker = Some(worker);
         info!("Context orchestrator: LLM worker set for semantic search");
     }
     
-    /// Chat persistence: Expose database for conversation API handlers
     pub fn database(&self) -> &Arc<MemoryDatabase> {
         &self.database
     }
     
-    /// Process conversation and return optimized context
     pub async fn process_conversation(
         &self,
         session_id: &str,
@@ -156,16 +145,11 @@ impl ContextOrchestrator {
         
         info!("Processing conversation for session {} ({} messages)", session_id, messages.len());
         
-        // Update current messages in Tier 1
         {
             let tier_manager = self.tier_manager.write().await;
             tier_manager.store_tier1_content(session_id, messages).await;
         }
 
-        // Check if conversation is approaching the context window limit.
-        // At 60% of max_context_tokens, fire off a background summarization task —
-        // non-blocking so the current request returns immediately. The updated summary
-        // will be prepended on the *next* turn, not this one.
         let estimated_tokens: usize = messages.iter().map(|m| m.content.len() / 4).sum();
         let summary_threshold = (self.config.max_context_tokens as f32 * 0.60) as usize;
         if estimated_tokens >= summary_threshold {
@@ -179,7 +163,6 @@ impl ContextOrchestrator {
             }
         }
 
-        // Save ONLY the last user message (new query) to database
         if let Some(last_message) = messages.last() {
             if last_message.role == "user" {
                 let tier_manager = self.tier_manager.read().await;
@@ -191,25 +174,21 @@ impl ContextOrchestrator {
             }
         }
         
-        // Create retrieval plan
         let plan = {
             let retrieval_planner = self.retrieval_planner.read().await;
             
-            // --- UPDATED CALL ---
-            // Detect if the user is referring to past conversations
             let has_past_refs = if let Some(query) = user_query {
                 retrieval_planner.has_past_references_in_text(query)
             } else {
                 false
             };
             
-            // Now create the plan using the detected references and the user query
             retrieval_planner.create_plan(
                 session_id,
                 messages,
                 self.config.max_context_tokens,
                 user_query,
-                has_past_refs, // Passing the reference check to the planner
+                has_past_refs, 
             ).await?
         };
         
@@ -218,11 +197,8 @@ impl ContextOrchestrator {
             return Ok(messages.to_vec());
         }
         
-        // Execute retrieval plan (includes semantic search when KV cache misses)
         let retrieved_content = self.execute_retrieval_plan(session_id, &plan, user_query).await?;
 
-        // === SMART RETRIEVAL INTEGRATION ===
-        // If smart retrieval is enabled, use it to optimize the context assembly
         let optimized_context = if let Some(ref smart_retrieval) = self.smart_retrieval {
             match smart_retrieval.retrieve(
                 session_id,
@@ -252,7 +228,7 @@ impl ContextOrchestrator {
                 }
             }
         } else {
-            // Smart retrieval disabled, use standard context building
+            
             let mut context_builder = self.context_builder.write().await;
             context_builder.build_context(
                 messages,
@@ -263,12 +239,8 @@ impl ContextOrchestrator {
             ).await?
         };
         
-        // If a cumulative summary exists for this session (generated at a prior threshold
-        // crossing), prepend it so the LLM always has full history context — not just
-        // the recent window. This is the re-feed path after a context compression event.
         let mut final_context = self.prepend_session_summary(session_id, optimized_context).await;
 
-        // If we used retrieval, update statistics
         if let Some(query) = user_query {
             if let Some(response) = final_context.last() {
                 if response.role == "assistant" {
@@ -286,11 +258,6 @@ impl ContextOrchestrator {
         Ok(final_context)
     }
     
-    /// Prepend the stored cumulative summary as the first system message in the context,
-
-    /// Prepend the stored cumulative summary as the first system message in the context,
-    /// so the LLM has full history even after the active window was trimmed.
-    /// Returns the context unchanged if no summary exists for this session.
     async fn prepend_session_summary(
         &self,
         session_id: &str,
@@ -319,7 +286,6 @@ impl ContextOrchestrator {
         }
     }
 
-    /// Save assistant response to database (Tier 3)
     pub async fn save_assistant_response(
         &self,
         session_id: &str,
@@ -334,9 +300,6 @@ impl ContextOrchestrator {
         tier_manager.store_tier3_content(session_id, &[assistant_message]).await
     }
     
-    /// Execute retrieval plan across all tiers.
-    /// When semantic_search is enabled and we have an LLM worker, we embed the query
-    /// and find similar messages via HNSW — this is the core "KV cache miss → DB retrieval" path.
     async fn execute_retrieval_plan(
         &self,
         session_id: &str,
@@ -345,19 +308,11 @@ impl ContextOrchestrator {
     ) -> anyhow::Result<RetrievedContent> {
         let mut retrieved = RetrievedContent::default();
 
-        // Retrieve from Tier 1 (current context — hot KV cache)
         if plan.use_tier1 {
             let tier_manager = self.tier_manager.read().await;
             retrieved.tier1 = tier_manager.get_tier1_content(session_id).await;
         }
 
-        // ── Semantic Search: KV cache miss path ──
-        // If the retrieval plan calls for semantic search AND we have embeddings available,
-        // embed the user query and find semantically similar past messages from the DB.
-        // This avoids re-computing full context — we retrieve just the relevant history.
-        //
-        // IMPORTANT: Skip entirely when no embeddings exist yet (first conversation / fresh DB).
-        // This avoids a wasted round-trip to llama-server /v1/embeddings when there's nothing to search.
         let mut semantic_results: Vec<crate::memory_db::StoredMessage> = Vec::new();
 
         let has_embeddings = self.database.embeddings.get_stats()
@@ -369,18 +324,18 @@ impl ContextOrchestrator {
                 match llm_worker.generate_embeddings(vec![query.to_string()]).await {
                     Ok(query_embeddings) if !query_embeddings.is_empty() => {
                         let query_vec = &query_embeddings[0];
-                        // Search HNSW index for similar past messages
+                        
                         match self.database.embeddings.find_similar_embeddings(
                             query_vec,
                             "llama-server",
                             (plan.max_messages * 2) as i32,
-                            0.3, // similarity threshold
+                            0.3, 
                         ) {
                             Ok(similar) if !similar.is_empty() => {
                                 info!("Semantic search found {} similar messages for context retrieval", similar.len());
-                                // Fetch actual message content for each match
+                                
                                 for (message_id, _similarity) in &similar {
-                                    // Get message from DB by ID
+                                    
                                     let conn = self.database.conversations.get_conn_public();
                                     if let Ok(conn) = conn {
                                         let mut stmt = conn.prepare(
@@ -422,7 +377,6 @@ impl ContextOrchestrator {
             }
         }
 
-        // Retrieve from Tier 3 (full database) — keyword fallback or supplement
         if plan.use_tier3 {
             let tier_manager = self.tier_manager.read().await;
             if plan.keyword_search && !plan.search_topics.is_empty() {
@@ -434,7 +388,7 @@ impl ContextOrchestrator {
                         topic,
                         limit_per_topic,
                     ).await {
-                        // Merge with semantic results, deduplicating by message ID
+                        
                         let semantic_ids: std::collections::HashSet<i64> = semantic_results.iter().map(|m| m.id).collect();
                         let mut merged = semantic_results.clone();
                         for msg in results {
@@ -446,13 +400,13 @@ impl ContextOrchestrator {
                         break;
                     }
                 }
-                // If keyword search found nothing but semantic did, use semantic results
+                
                 if retrieved.tier3.is_none() && !semantic_results.is_empty() {
                     retrieved.tier3 = Some(semantic_results.clone());
                 }
             } else {
                 if !semantic_results.is_empty() {
-                    // Use semantic results as tier3 content
+                    
                     retrieved.tier3 = Some(semantic_results.clone());
                 } else {
                     retrieved.tier3 = tier_manager.get_tier3_content(
@@ -463,11 +417,10 @@ impl ContextOrchestrator {
                 }
             }
         } else if !semantic_results.is_empty() {
-            // Even if tier3 wasn't planned, if semantic search found relevant content, use it
+            
             retrieved.tier3 = Some(semantic_results);
         }
 
-        // Add cross-session search if needed
         if plan.cross_session_search && !plan.search_topics.is_empty() {
             let tier_manager = self.tier_manager.read().await;
             if let Ok(cross_session_results) = tier_manager.search_cross_session_content(
@@ -511,7 +464,6 @@ impl ContextOrchestrator {
         })
     }
     
-    /// Search messages across sessions by keywords
     pub async fn search_messages(
         &self,
         session_id: Option<&str>,
@@ -523,11 +475,10 @@ impl ContextOrchestrator {
         }
         
         if let Some(sid) = session_id {
-            // Search within specific session
+            
             self.database.search_messages_by_keywords(sid, keywords, limit).await
         } else {
-            // Search across all sessions (would need cross-session search implementation)
-            // For now, return empty results for global search
+            
             Ok(Vec::new())
         }
     }
@@ -546,14 +497,11 @@ impl ContextOrchestrator {
         &self.config
     }
 
-    // Chat persistence: Expose tier manager to ensure sessions exist before processing
     pub fn tier_manager(&self) -> &Arc<RwLock<TierManager>> {
         &self.tier_manager
     }
 }
 
-/// Free function — runs in a background `tokio::spawn` task so it never blocks a request.
-/// Generates or updates the single cumulative session summary and persists it to SQLite.
 async fn generate_and_store_summary(
     database: &Arc<crate::memory_db::MemoryDatabase>,
     llm_worker: &Arc<LLMWorker>,

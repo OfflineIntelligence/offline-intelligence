@@ -1,7 +1,4 @@
-// Title generation API: summarize first prompt into 1-5 word chat title via model inference.
-// Offline mode → local LLM worker.
-// Online mode  → OpenRouter proxy (frontend passes api_key + model_id; backend proxies the call
-//                so the WebView never connects to external URLs — Tauri CSP compliance).
+
 use axum::{
     extract::{State, Json},
     http::StatusCode,
@@ -16,10 +13,10 @@ pub struct GenerateTitleRequest {
     pub prompt: String,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
-    /// Online mode: OpenRouter API key forwarded from the frontend.
+    
     #[serde(default)]
     pub api_key: Option<String>,
-    /// Online mode: OpenRouter model ID (e.g. "anthropic/claude-3-haiku").
+    
     #[serde(default)]
     pub model_id: Option<String>,
 }
@@ -38,12 +35,6 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
-/// Generate a concise chat title (1-5 words) from a user prompt.
-///
-/// - **Offline mode** (no `api_key`/`model_id`): uses the local LLM worker directly.
-/// - **Online mode** (`api_key` + `model_id` present): proxies to OpenRouter on behalf of the
-///   frontend. The frontend must NOT call OpenRouter directly — Tauri's CSP blocks external
-///   `connect-src` origins from the WebView.
 pub async fn generate_title(
     State(state): State<UnifiedAppState>,
     Json(req): Json<GenerateTitleRequest>,
@@ -59,7 +50,6 @@ pub async fn generate_title(
         ));
     }
 
-    // ── Online path: proxy to OpenRouter ─────────────────────────────────────
     if let (Some(api_key), Some(model_id)) = (&req.api_key, &req.model_id) {
         if !api_key.is_empty() && !model_id.is_empty() {
             let model_id = model_id.replace("openrouter:", "").replace("openrouter/", "");
@@ -107,11 +97,9 @@ pub async fn generate_title(
                 }
             }
 
-            // Fall through to local LLM if OpenRouter fails.
         }
     }
 
-    // ── Offline path: local LLM worker ───────────────────────────────────────
     let title_instruction = format!(
         "User prompt: {}\n\n\
          Create a short, meaningful chat title using 1-5 words maximum that captures the essence of this prompt.",

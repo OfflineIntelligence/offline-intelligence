@@ -1,6 +1,3 @@
-//! Database worker thread implementation
-//!
-//! Handles database operations in a dedicated thread with connection pooling.
 
 use std::sync::Arc;
 use tracing::{info, debug};
@@ -21,7 +18,6 @@ impl DatabaseWorker {
         Self { shared_state }
     }
     
-    /// Store messages in database
     pub async fn store_messages(
         &self,
         session_id: String,
@@ -46,7 +42,6 @@ impl DatabaseWorker {
         Ok(())
     }
 
-    /// Retrieve conversation from database
     pub async fn get_conversation(
         &self,
         session_id: &str,
@@ -60,7 +55,6 @@ impl DatabaseWorker {
         Ok(messages)
     }
 
-    /// Update conversation title
     pub async fn update_conversation_title(
         &self,
         session_id: &str,
@@ -75,7 +69,6 @@ impl DatabaseWorker {
         Ok(())
     }
 
-    /// Delete conversation
     pub async fn delete_conversation(
         &self,
         session_id: &str,
@@ -89,16 +82,13 @@ impl DatabaseWorker {
         Ok(())
     }
     
-    /// Begin database transaction
     pub async fn begin_transaction(&self) -> anyhow::Result<Transaction<'_>> {
         debug!("Database worker beginning transaction");
         
-        // Use shared database pool
         let transaction = self.shared_state.database_pool.begin_transaction()?;
         Ok(transaction)
     }
     
-    /// Get database statistics
     pub async fn get_stats(&self) -> anyhow::Result<DatabaseStats> {
         debug!("Database worker getting statistics");
         
@@ -106,7 +96,6 @@ impl DatabaseWorker {
         Ok(stats)
     }
     
-    /// Cleanup old data
     pub async fn cleanup_old_data(&self, older_than_days: i32) -> anyhow::Result<usize> {
         debug!("Database worker cleaning up data older than {} days", older_than_days);
         

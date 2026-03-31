@@ -1,4 +1,4 @@
-//! Authentication API - User registration, login, email verification, and Google OAuth
+
 use crate::memory_db::UsersStore;
 use crate::shared_state::UnifiedAppState;
 use argon2::{password_hash::SaltString, Argon2, PasswordHasher, PasswordVerifier};
@@ -15,10 +15,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 use tracing::{error, info, warn};
 
-// ─── Google OAuth Pending State ────────────────────────────────────────────────
-
-/// Holds the Google OAuth client credentials and a map of in-flight auth states.
-/// Map key = `state` param; value = (redirect_uri, Option<result-when-done>).
 pub struct GoogleOAuthPending {
     pub states: Arc<StdMutex<HashMap<String, (String, Option<GoogleOAuthResult>)>>>,
     pub client_id: String,
@@ -41,17 +37,13 @@ pub struct GoogleOAuthResult {
     pub user: UserResponse,
 }
 
-// ─── Auth State ────────────────────────────────────────────────────────────────
-
 #[derive(Clone)]
 pub struct AuthState {
     pub users: UsersStore,
     pub jwt_secret: String,
-    /// Present only when GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET are set.
+    
     pub google: Option<GoogleOAuthPending>,
 }
-
-// ─── JWT Claims ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -61,8 +53,6 @@ pub struct Claims {
     pub exp: i64,
     pub iat: i64,
 }
-
-// ─── Request / Response types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct SignupRequest {
@@ -105,7 +95,6 @@ pub struct UserResponse {
     pub avatar_url: Option<String>,
 }
 
-// Google OAuth request/response types
 #[derive(Debug, Deserialize)]
 pub struct GoogleInitRequest {
     pub port: u16,
@@ -123,13 +112,11 @@ pub struct GoogleStatusQuery {
     pub state: String,
 }
 
-/// Google token-endpoint response (we only need access_token)
 #[derive(Deserialize)]
 struct GoogleTokenResponse {
     access_token: String,
 }
 
-/// Google userinfo-endpoint response
 #[derive(Deserialize)]
 struct GoogleUserInfo {
     id: String,
@@ -137,8 +124,6 @@ struct GoogleUserInfo {
     name: String,
     picture: Option<String>,
 }
-
-// ─── JWT helpers ───────────────────────────────────────────────────────────────
 
 const JWT_EXPIRY_HOURS: i64 = 24 * 7;
 
@@ -171,8 +156,6 @@ fn decode_jwt_token(token: &str, secret: &str) -> Result<TokenData<Claims>, Stri
     .map_err(|e| format!("Invalid token: {}", e))
 }
 
-// ─── Password helpers ──────────────────────────────────────────────────────────
-
 fn hash_password(password: &str) -> Result<String, String> {
     let salt = SaltString::generate(&mut rand::thread_rng());
     let argon2 = Argon2::default();
@@ -192,8 +175,6 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
     }
 }
 
-// ─── URL encode helper (for building Google OAuth URL) ─────────────────────────
-
 fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
@@ -206,8 +187,6 @@ fn url_encode(s: &str) -> String {
     }
     out
 }
-
-// ─── HTML helpers for Google callback page (shown in system browser) ───────────
 
 fn success_html() -> String {
     r#"<!DOCTYPE html>
@@ -317,8 +296,6 @@ fn error_html(msg: &str) -> String {
     )
 }
 
-// ─── State accessor ────────────────────────────────────────────────────────────
-
 fn get_auth_state(state: &UnifiedAppState) -> &AuthState {
     state
         .auth_state
@@ -326,10 +303,6 @@ fn get_auth_state(state: &UnifiedAppState) -> &AuthState {
         .expect("Auth state not initialized")
         .as_ref()
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Email / password handlers (kept for backward compatibility)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 pub async fn signup(
     State(state): State<UnifiedAppState>,
@@ -416,7 +389,6 @@ pub async fn signup(
         Ok(user_id) => {
             info!("User created with id: {}", user_id);
 
-            // Issue a JWT immediately so the user is signed in right after signup.
             let jwt = match create_jwt_token(&email, name, &auth_state.jwt_secret) {
                 Ok(t) => t,
                 Err(e) => {
@@ -434,7 +406,6 @@ pub async fn signup(
                 }
             };
 
-            // Fire-and-forget welcome email — never blocks the response.
             let welcome_name = name.to_string();
             let welcome_email = email.clone();
             tokio::spawn(async move {
@@ -526,7 +497,6 @@ pub async fn login(
         }
     };
 
-    // Google-only accounts cannot log in with email/password
     if user.password_hash == "google-oauth-user" {
         return (
             StatusCode::UNAUTHORIZED,
@@ -778,13 +748,6 @@ pub async fn get_current_user(
     )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Google OAuth handlers
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// POST /auth/google/init
-/// Body: { "port": 8000 }
-/// Returns: { "auth_url": "https://accounts.google.com/...", "state": "hex-string" }
 pub async fn google_init(
     State(state): State<UnifiedAppState>,
     Json(payload): Json<GoogleInitRequest>,
@@ -804,14 +767,12 @@ pub async fn google_init(
         }
     };
 
-    // Generate a random state parameter for CSRF protection
     let state_param: String = hex::encode(rand::thread_rng().gen::<[u8; 16]>());
     let redirect_uri = format!(
         "http://127.0.0.1:{}/auth/google/callback",
         payload.port
     );
 
-    // Store the state in the pending map
     {
         let mut states = google.states.lock().unwrap();
         states.insert(state_param.clone(), (redirect_uri.clone(), None));
@@ -839,9 +800,6 @@ pub async fn google_init(
     )
 }
 
-/// GET /auth/google/callback?code=&state=&error=
-/// This endpoint is hit by the system browser after Google redirects back.
-/// Returns an HTML page (shown in the system browser, not the Tauri WebView).
 pub async fn google_callback(
     State(state): State<UnifiedAppState>,
     Query(params): Query<GoogleCallbackQuery>,
@@ -853,7 +811,6 @@ pub async fn google_callback(
         None => return Html(error_html("OAuth not configured on this server.")).into_response(),
     };
 
-    // Handle Google-reported errors (e.g. user denied access)
     if let Some(err) = params.error {
         if let Some(ref s) = params.state {
             google.states.lock().unwrap().remove(s);
@@ -876,7 +833,6 @@ pub async fn google_callback(
         _ => return Html(error_html("Missing state parameter.")).into_response(),
     };
 
-    // Retrieve the stored redirect_uri for this state (validates the state too)
     let redirect_uri = {
         let states = google.states.lock().unwrap();
         match states.get(&state_param) {
@@ -890,7 +846,6 @@ pub async fn google_callback(
         }
     };
 
-    // Exchange the authorization code for an access token
     let http = reqwest::Client::new();
     let token_resp = http
         .post("https://oauth2.googleapis.com/token")
@@ -924,7 +879,6 @@ pub async fn google_callback(
         }
     };
 
-    // Fetch the user's profile from Google
     let user_info_resp = http
         .get("https://www.googleapis.com/oauth2/v2/userinfo")
         .bearer_auth(&access_token)
@@ -946,8 +900,6 @@ pub async fn google_callback(
         }
     };
 
-    // Create or update the user in the local database.
-    // Returns (user, is_new_user) — is_new_user=true means first-ever sign-in.
     let (db_user, is_new_user) = match auth_state.users.upsert_google_user(
         &google_user.email,
         &google_user.name,
@@ -964,9 +916,8 @@ pub async fn google_callback(
         }
     };
 
-    // Fire-and-forget emails when a brand-new user registers.
     if is_new_user {
-        // Notify the product team
+        
         let name_notif = google_user.name.clone();
         let email_notif = google_user.email.clone();
         tokio::spawn(async move {
@@ -975,7 +926,6 @@ pub async fn google_callback(
             }
         });
 
-        // Send welcome email to the user
         let name_welcome = google_user.name.clone();
         let email_welcome = google_user.email.clone();
         tokio::spawn(async move {
@@ -985,7 +935,6 @@ pub async fn google_callback(
         });
     }
 
-    // Issue a local JWT
     let jwt = match create_jwt_token(&db_user.email, &db_user.name, &auth_state.jwt_secret) {
         Ok(t) => t,
         Err(e) => {
@@ -1002,7 +951,6 @@ pub async fn google_callback(
         avatar_url: db_user.avatar_url.clone(),
     };
 
-    // Store the result so the polling endpoint can pick it up
     {
         let mut states = google.states.lock().unwrap();
         if let Some(entry) = states.get_mut(&state_param) {
@@ -1013,8 +961,6 @@ pub async fn google_callback(
         }
     }
 
-    // Fire-and-forget login confirmation email to the user's own inbox.
-    // Sent on EVERY successful Google sign-in so the user always gets a receipt.
     {
         let name  = google_user.name.clone();
         let email = google_user.email.clone();
@@ -1029,8 +975,6 @@ pub async fn google_callback(
     Html(success_html()).into_response()
 }
 
-/// GET /auth/google/status?state=<hex>
-/// Returns { "pending": true } while waiting, or full auth result when done.
 pub async fn google_status(
     State(state): State<UnifiedAppState>,
     Query(params): Query<GoogleStatusQuery>,
@@ -1054,7 +998,7 @@ pub async fn google_status(
     let mut states = google.states.lock().unwrap();
 
     match states.get(&params.state) {
-        // State not found — either expired or never initiated
+        
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -1064,13 +1008,11 @@ pub async fn google_status(
             })),
         ),
 
-        // State found, result not yet available — still waiting for the browser
         Some((_, None)) => (
             StatusCode::OK,
             Json(serde_json::json!({ "pending": true })),
         ),
 
-        // Result available — return it and clean up
         Some((_, Some(_))) => {
             let result = states.remove(&params.state).unwrap().1.unwrap();
             (
@@ -1093,10 +1035,6 @@ pub async fn google_status(
     }
 }
 
-// ─── New-user notification email ─────────────────────────────────────────────
-
-/// Sends a notification to the product team whenever a brand-new Google user
-/// registers for the first time.  Non-critical — failures are only logged.
 async fn send_new_user_notification(name: &str, email: &str) -> Result<(), String> {
     use lettre::{
         message::header::ContentType, transport::smtp::authentication::Credentials, Message,
@@ -1163,10 +1101,6 @@ async fn send_new_user_notification(name: &str, email: &str) -> Result<(), Strin
     Ok(())
 }
 
-// ─── Login confirmation email sent to the user after every Google sign-in ─────
-
-/// Sends a sign-in confirmation / receipt email to the user's own inbox.
-/// Non-critical — failures are only logged, never bubbled to the user.
 async fn send_login_confirmation_email(name: &str, user_email: &str) -> Result<(), String> {
     use lettre::{
         message::header::ContentType, transport::smtp::authentication::Credentials, Message,
@@ -1270,10 +1204,6 @@ async fn send_login_confirmation_email(name: &str, user_email: &str) -> Result<(
     Ok(())
 }
 
-// ─── Welcome email sent once to every new user on first signup ─────────────────
-
-/// Sends a one-time welcome email after a new account is created (email/password
-/// or Google OAuth first sign-in).  Non-critical — failures are only logged.
 async fn send_welcome_email(name: &str, user_email: &str) -> Result<(), String> {
     use lettre::{
         message::header::ContentType, transport::smtp::authentication::Credentials, Message,

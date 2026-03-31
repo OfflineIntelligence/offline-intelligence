@@ -1,4 +1,4 @@
-// User Login Notification API: sends email notification when a new user logs in
+
 use axum::{
     extract::Json,
     http::StatusCode,
@@ -33,7 +33,6 @@ pub async fn notify_user_login(
 
     info!("Received login notification for user: {}", payload.user_email);
 
-    // Try to send email notification (non-blocking — don't fail if email fails)
     match send_login_notification_email(&payload).await {
         Ok(user_number) => {
             info!("Login notification email #{} sent to product team for user: {}", user_number, payload.user_email);
@@ -47,7 +46,7 @@ pub async fn notify_user_login(
         }
         Err(e) => {
             warn!("Login notification email not sent (SMTP may not be configured): {}", e);
-            // Still return success - we don't want to block login if email fails
+            
             (
                 StatusCode::OK,
                 Json(LoginNotificationResponse {
@@ -59,11 +58,9 @@ pub async fn notify_user_login(
     }
 }
 
-/// Get the next user number for sequential tracking
 fn get_next_user_number() -> u64 {
     let counter_path = std::path::Path::new("./data/user_counter.txt");
     
-    // Read current counter
     let current = if counter_path.exists() {
         std::fs::read_to_string(counter_path)
             .ok()
@@ -75,7 +72,6 @@ fn get_next_user_number() -> u64 {
     
     let next = current + 1;
     
-    // Save next counter
     if let Some(parent) = counter_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -104,7 +100,6 @@ async fn send_login_notification_email(payload: &LoginNotificationRequest) -> Re
         .parse()
         .unwrap_or(587);
 
-    // Get sequential user number
     let user_number = get_next_user_number();
 
     let from_address = format!("Aud.io Login <{}>", smtp_user);
