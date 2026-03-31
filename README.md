@@ -44,6 +44,8 @@ The server is written in Rust for speed and stability. Once it is running, you t
 - [Benchmarks](#benchmarks)
 - [Architecture](#architecture)
 - [Security](#security)
+- [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
 - [Contributing](#contributing)
 - [License](#license)
 - [Support](#support)
@@ -993,6 +995,210 @@ src/
 - Enable rate limiting (`REQUESTS_PER_SECOND`) to protect against abuse
 - Use HTTPS via a reverse proxy (nginx, Caddy) if exposing the server over a network
 - Set `MAX_CONCURRENT_STREAMS` based on expected load
+
+---
+
+## Troubleshooting
+
+### The server will not start
+
+**`LLAMA_BIN` is wrong or missing:**
+```
+Error: No such file or directory (os error 2)
+```
+Open your `.env` file and check that `LLAMA_BIN` points to the exact binary. On Windows the file is `llama-server.exe`, not `llama-server`.
+
+**`MODEL_PATH` is wrong:**
+```
+Error: failed to load model from ...
+```
+Double-check that the path in `MODEL_PATH` leads directly to a `.gguf` file. Spaces in the path are fine as long as you do not add extra quotes inside the `.env` file.
+
+**Port already in use:**
+```
+Error: Address already in use (os error 98)
+```
+Something else is on port 9999. Either stop the other process or add `API_PORT=9998` (or any free port) to your `.env`.
+
+---
+
+### The model is loading but responses are very slow
+
+The model is probably running on CPU only. Check whether GPU layers are being used:
+```bash
+curl http://127.0.0.1:9999/hardware
+```
+If `gpu_layers` is 0 and you have a CUDA-capable GPU, make sure:
+1. You downloaded the CUDA build of llama-server (the zip name includes `cuda` or `cublas`)
+2. Your NVIDIA driver is up to date (CUDA 12.x requires driver 525+)
+3. You have not explicitly set `GPU_LAYERS=0` in your `.env`
+
+---
+
+### CUDA errors at startup
+
+```
+CUDA error: no kernel image is available for execution on the device
+```
+You downloaded a llama-server binary compiled for a different CUDA compute capability. Download the matching build from the llama.cpp releases page (e.g. `cu121` for CUDA 12.1).
+
+```
+CUDA error: out of memory
+```
+The model does not fit in your GPU VRAM at the current `GPU_LAYERS` setting. Lower it by adding `GPU_LAYERS=8` (or any value smaller than what auto-detection chose) to your `.env`.
+
+---
+
+### Out of system RAM
+
+```
+ggml_backend_alloc_ctx_tensors: not enough memory
+```
+Your model is too large for the RAM available. Options:
+- Use a smaller model (e.g. Q3_K_S instead of Q4_K_M)
+- Lower `CTX_SIZE` to `2048` or `1024`
+- Set `BATCH_SIZE=64`
+
+---
+
+### Responses cut off or incomplete
+
+The model is hitting the `max_tokens` limit. In your request body, increase `max_tokens`:
+```json
+{
+  "messages": [{"role": "user", "content": "..."}],
+  "max_tokens": 2048
+}
+```
+
+---
+
+### `cargo install offline-intelligence` fails to compile
+
+On Windows, the linker sometimes fails on first install due to PDB locking. Try:
+```bash
+cargo install offline-intelligence --locked
+```
+If you are on Linux and see missing library errors (`libssl`, `libsqlite3`), install them:
+```bash
+sudo apt install libssl-dev libsqlite3-dev pkg-config   # Debian / Ubuntu
+sudo dnf install openssl-devel sqlite-devel              # Fedora / RHEL
+```
+
+---
+
+### `401 Unauthorized` on API calls
+
+Protected endpoints require a JWT token in the `Authorization` header. Log in first:
+```bash
+curl -X POST http://127.0.0.1:9999/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"email": "you@example.com", "password": "yourpassword"}'
+```
+Copy the returned token and pass it on subsequent requests:
+```bash
+curl http://127.0.0.1:9999/conversations \
+     -H "Authorization: Bearer <your-token>"
+```
+
+---
+
+### Live web tools are not triggering
+
+Web tools are enabled by default but require the user message to match a recognized intent. The trigger is keyword-based:
+- Weather: include a city name and "weather", "temperature", "forecast", or similar
+- Currency: include an amount, a currency code (USD, EUR, BTC), and "convert" or "to"
+- Crypto: include a coin name and "price", "worth", "value", or similar
+
+Check that tools are enabled:
+```bash
+curl http://127.0.0.1:9999/tools/settings
+```
+If `"enabled": false`, enable them:
+```bash
+curl -X POST http://127.0.0.1:9999/tools/settings \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": true}'
+```
+
+---
+
+## FAQ
+
+**Does it work without a GPU?**
+Yes. Set `GPU_LAYERS=0` in your `.env` and the model runs entirely on CPU. Expect roughly 3–8 T/s on a modern 8-core CPU with a 3B model, compared to 40+ T/s with a GPU. For everyday use on CPU, stick to models at or below 3B parameters.
+
+---
+
+**What model formats are supported?**
+The primary format is GGUF (used by llama.cpp). The library also accepts GGML, ONNX, SafeTensors, CoreML (macOS), and TensorRT (`.engine`) files, though llama.cpp itself only runs GGUF natively. Other formats go through the relevant runtime.
+
+---
+
+**Can I connect my own frontend or UI to this?**
+Yes. The server is a plain HTTP API on port 9999. Any tool that can make HTTP requests works: a web app, a mobile app, Postman, curl, or anything else. The streaming endpoint (`POST /generate/stream`) uses Server-Sent Events (SSE), which is supported natively in all modern browsers.
+
+---
+
+**Is my data private?**
+All inference runs locally on your machine. No conversation data, prompts, or responses are sent anywhere. The only outbound network calls are:
+- Web tools (weather, currency, crypto) — only when triggered by a matching user message, and all use keyless public APIs
+- OpenRouter (only if you explicitly switch to online mode via `POST /mode`)
+
+---
+
+**What is the difference between offline mode and online mode?**
+In offline mode (the default), every request is processed by the local llama-server subprocess using your local GGUF model. In online mode, requests are forwarded to OpenRouter, giving you access to hosted models like GPT-4o, Claude, Gemini, and others. You need an OpenRouter API key for online mode. Switch between them at runtime without restarting the server:
+```bash
+POST /mode   {"mode": "offline"}
+POST /mode   {"mode": "online"}
+```
+
+---
+
+**Can multiple users use the server at the same time?**
+Yes. The server enables `--parallel 8` continuous batching by default, so up to 8 concurrent streaming requests share a single GPU pass per decode step. This gives roughly 1.76× more total output throughput compared to a queued single-user setup. Raise `MAX_CONCURRENT_STREAMS` if you need more.
+
+---
+
+**How much disk space do I need?**
+The server binary itself is small (a few MB). The space requirement is dominated by the model:
+
+| Model size | Disk space |
+|-----------|-----------|
+| 3B Q4 | ~2 GB |
+| 7B Q4 | ~4 GB |
+| 13B Q4 | ~8 GB |
+| 34B Q4 | ~20 GB |
+| 70B Q4 | ~40 GB |
+
+SQLite databases for conversations and memory grow slowly. Expect a few MB per month for typical usage.
+
+---
+
+**Can I run multiple models and switch between them?**
+Yes. Use the model API to install and switch models at runtime:
+```bash
+GET  /models              # list available models
+GET  /models/active       # see which model is loaded
+POST /admin/load          # load a different model: {"model_path": "...", "ctx_size": 8192}
+POST /admin/stop          # stop the current model
+```
+
+---
+
+**What happens if the web tool fetch fails or times out?**
+The model answers from its training data as normal. No error is shown to the user. Each tool has an 8-second individual timeout, and there is a 10-second hard deadline across all tools combined. Failure is silent and graceful.
+
+---
+
+**How do I expose the server to other devices on my network?**
+Change `API_HOST` in your `.env` to `0.0.0.0`:
+```env
+API_HOST=0.0.0.0
+API_PORT=9999
+```
+The server will then accept connections from any device on your local network using your machine's IP address (e.g. `http://192.168.1.10:9999`). Do not expose port 9999 to the public internet without a reverse proxy and TLS.
 
 ---
 
