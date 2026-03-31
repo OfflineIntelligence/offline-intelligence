@@ -2,7 +2,7 @@
 
 <h1>Offline Intelligence Library</h1>
 
-Run AI models entirely on your own machine — no internet, no cloud, no data leaving your device.
+Run AI models entirely on your own machine. No internet, no cloud, no data leaves your device.
 Cross-platform server with bindings for Python, JavaScript, Rust, C++, and Java.
 
 <br>
@@ -14,7 +14,7 @@ Cross-platform server with bindings for Python, JavaScript, Rust, C++, and Java.
 
 <br>
 
-**Current Version:** v0.1.5 — March 30, 2026 | **License:** Apache 2.0
+**Current Version:** v0.1.5 (March 30, 2026) | **License:** Apache 2.0
 
 </div>
 
@@ -22,9 +22,9 @@ Cross-platform server with bindings for Python, JavaScript, Rust, C++, and Java.
 
 ## What Is This?
 
-The Offline Intelligence Library is a server that runs AI language models (LLMs) on your own computer. You download a model file once, and from that point on all AI inference happens locally — no API calls to OpenAI, no subscription fees, no data sent to anyone.
+The Offline Intelligence Library is a server that runs AI language models (LLMs) on your own computer. You download a model file once, and from that point on all AI inference happens locally. No API calls to OpenAI, no subscription fees, no data sent to anyone.
 
-The server is written in Rust for speed and stability. Once it is running, you talk to it over HTTP from any language — Python, JavaScript, Java, C++, or Rust. The server handles everything: loading the model, managing conversation memory, streaming responses token by token, and optionally fetching live data (weather, currency, crypto prices) to answer questions the model alone could not.
+The server is written in Rust for speed and stability. Once it is running, you talk to it over HTTP from any language: Python, JavaScript, Java, C++, or Rust. The server handles everything: loading the model, managing conversation memory, streaming responses token by token, and optionally fetching live data (weather, currency, crypto prices) to answer questions the model alone could not.
 
 **If you just want to try it:** jump to [Quick Start](#quick-start).
 
@@ -56,7 +56,7 @@ The server is written in Rust for speed and stability. Once it is running, you t
 
 | Feature | Description |
 |---------|-------------|
-| **5 Language Bindings** | Rust, Python, JavaScript/Node.js, Java, C++ — all talking to the same server over HTTP |
+| **5 Language Bindings** | Rust, Python, JavaScript/Node.js, Java, C++. All talk to the same server over HTTP |
 | **Fully Offline** | Runs entirely on your machine. No internet required after model download |
 | **Privacy First** | All data stays local. No telemetry, no cloud calls |
 | **Streaming Responses** | Tokens stream back in real time, just like ChatGPT |
@@ -64,7 +64,7 @@ The server is written in Rust for speed and stability. Once it is running, you t
 | **Live Web Tools** | Automatically fetches weather, currency rates, and crypto prices to answer live questions |
 | **User Authentication** | Built-in registration, login, JWT sessions, and Google OAuth 2.0 |
 | **API Key Management** | Stores your HuggingFace and OpenRouter keys encrypted on-device |
-| **Online / Offline Toggle** | Switch between local llama.cpp and OpenRouter cloud at runtime — no restart needed |
+| **Online / Offline Toggle** | Switch between local llama.cpp and OpenRouter cloud at runtime without restarting the server |
 | **File Attachments** | Upload and attach files to conversations |
 | **Auto Hardware Detection** | Automatically picks the right GPU layers, thread count, and memory limits for your machine |
 | **Prometheus Metrics** | `/metrics` endpoint compatible with Grafana and any Prometheus-based monitoring stack |
@@ -78,7 +78,7 @@ The server is written in Rust for speed and stability. Once it is running, you t
 
 The server now detects certain questions in real time and fetches live data before sending the conversation to the AI model. This means the model can answer questions it otherwise couldn't (current temperature, today's exchange rates, live crypto prices).
 
-**How it works:** Every incoming user message is scanned for intent. If a relevant intent is detected, the data is fetched in parallel (max 8 seconds per source, 10-second hard deadline), formatted with numbered `[1]`, `[2]` citation markers, and injected as a system context block. If the fetch times out or fails, the model answers from its training data silently — no error shown to the user.
+**How it works:** Every incoming user message is scanned for intent. If a relevant intent is detected, the data is fetched in parallel (max 8 seconds per source, 10-second hard deadline), formatted with numbered `[1]`, `[2]` citation markers, and injected as a system context block. If the fetch times out or fails, the model answers from its training data silently, with no error shown to the user.
 
 | Intent | Trigger example | Data source |
 |--------|----------------|-------------|
@@ -94,7 +94,7 @@ POST http://127.0.0.1:9999/tools/settings   {"enabled": true, "brave_key": "opti
 
 ### User Authentication
 
-Full auth stack built into the server — no third-party service needed:
+Full auth stack built into the server. No third-party service needed:
 
 ```bash
 POST /auth/register   {"username": "alice", "email": "alice@example.com", "password": "secret"}
@@ -107,7 +107,7 @@ Passwords are hashed with Argon2. Login returns a JWT token. Pass it as `Authori
 
 ### Encrypted API Key Storage
 
-Store your HuggingFace and OpenRouter keys on-device. They are encrypted using a machine-specific key before being written to SQLite — they never exist in plaintext outside the process:
+Store your HuggingFace and OpenRouter keys on-device. They are encrypted using a machine-specific key before being written to SQLite. They never exist in plaintext outside the process:
 
 ```bash
 POST   /api-keys   {"key_type": "huggingface", "value": "hf_..."}
@@ -147,7 +147,7 @@ POST /feedback   {"message": "Really helpful!", "email": "optional@email.com"}
 
 This gets you from zero to a running AI server in 5 steps.
 
-### Step 1 — Download llama-server
+### Step 1: Download llama-server
 
 llama-server is the engine that runs the AI model. Download a prebuilt binary from:
 **https://github.com/ggerganov/llama.cpp/releases**
@@ -165,7 +165,7 @@ Place the binary somewhere on your system, for example:
 - Windows: `C:\llama\llama-server.exe`
 - macOS/Linux: `/usr/local/bin/llama-server`
 
-### Step 2 — Download a Model
+### Step 2: Download a Model
 
 The library uses GGUF format model files. Pick one based on your available RAM:
 
@@ -176,11 +176,11 @@ The library uses GGUF format model files. Pick one based on your available RAM:
 | Llama 3 8B Q4 | ~5 GB | 10 GB | https://huggingface.co/TheBloke/Llama-3-8B-Instruct-GGUF |
 | Llama 3 70B Q4 | ~40 GB | 48 GB | https://huggingface.co/TheBloke/Llama-3-70B-Instruct-GGUF |
 
-> Not sure which to pick? Start with **Llama 3.2 3B Q4** — it runs on almost any machine and is a good baseline.
+> Not sure which to pick? Start with **Llama 3.2 3B Q4**: it runs on almost any machine and is a good baseline.
 
 Browse all GGUF models: https://huggingface.co/models?library=gguf
 
-### Step 3 — Create a .env File
+### Step 3: Create a .env File
 
 Create a file called `.env` in the folder where you will run the server. This tells the server where your files are.
 
@@ -202,7 +202,7 @@ API_PORT=9999
 
 Everything else (GPU layers, thread count, memory limits) is detected automatically.
 
-### Step 4 — Start the Server
+### Step 4: Start the Server
 
 ```bash
 cargo install offline-intelligence
@@ -225,7 +225,7 @@ Expected response: `{"status":"ok"}`
 
 > **Note:** The server must be running before you use any of the language clients below.
 
-### Step 5 — Use Any Language Client
+### Step 5: Use Any Language Client
 
 With the server running on port 9999, pick the language you want:
 
@@ -283,7 +283,7 @@ repositories { maven { url 'https://jitpack.io' } }
 dependencies { implementation 'com.github.OfflineIntelligence:offline-intelligence:v0.1.5' }
 ```
 
-**C++ (CMake FetchContent — recommended):**
+**C++ (CMake FetchContent, recommended):**
 ```cmake
 include(FetchContent)
 FetchContent_Declare(
@@ -525,20 +525,20 @@ All configuration is set in your `.env` file (or as system environment variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LLAMA_BIN` | **Yes** | — | Full path to the `llama-server` binary |
-| `MODEL_PATH` | **Yes** | — | Full path to your `.gguf` model file |
+| `LLAMA_BIN` | **Yes** | (required) | Full path to the `llama-server` binary |
+| `MODEL_PATH` | **Yes** | (required) | Full path to your `.gguf` model file |
 | `API_HOST` | No | `127.0.0.1` | IP address the server listens on. Use `0.0.0.0` to allow connections from other devices |
 | `API_PORT` | No | `9999` | Port the server listens on |
 | `LLAMA_HOST` | No | `127.0.0.1` | Host for the llama-server subprocess |
 | `LLAMA_PORT` | No | `8081` | Port for the llama-server subprocess |
 | `BACKEND_URL` | No | auto | Full URL to llama-server (e.g. `http://127.0.0.1:8081`) |
-| `OPENROUTER_API_KEY` | No | — | OpenRouter key for online/cloud mode |
+| `OPENROUTER_API_KEY` | No | none | OpenRouter key for online/cloud mode |
 | `CTX_SIZE` | No | auto | Context window size in tokens (e.g. `8192`) |
 | `BATCH_SIZE` | No | auto | Batch size for prompt processing (e.g. `512`) |
 | `THREADS` | No | auto | Number of CPU threads to use |
 | `GPU_LAYERS` | No | auto | How many model layers to offload to GPU |
 | `MAX_CONCURRENT_STREAMS` | No | `4` | Max simultaneous streaming requests |
-| `REQUESTS_PER_SECOND` | No | `24` | Rate limit — requests per second |
+| `REQUESTS_PER_SECOND` | No | `24` | Rate limit in requests per second |
 | `PROMETHEUS_PORT` | No | `9000` | Port for the Prometheus metrics endpoint |
 
 ### Auto-Detection
@@ -639,8 +639,8 @@ The server exposes a REST API on `http://127.0.0.1:9999` (or wherever you config
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/generate/stream` | Stream an AI response token by token (SSE) |
-| `GET` | `/healthz` | Health check — returns `{"status":"ok"}` |
-| `GET` | `/readyz` | Readiness check — returns backend and model status |
+| `GET` | `/healthz` | Health check. Returns `{"status":"ok"}` |
+| `GET` | `/readyz` | Readiness check. Returns backend and model status |
 | `GET` | `/metrics` | Prometheus metrics |
 
 **POST /generate/stream** request body:
@@ -696,7 +696,7 @@ The server exposes a REST API on `http://127.0.0.1:9999` (or wherever you config
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/auth/register` | Register: `{"username": "...", "email": "...", "password": "..."}` |
-| `POST` | `/auth/login` | Login — returns `{"token": "..."}` |
+| `POST` | `/auth/login` | Login. Returns a JWT token in the response body |
 | `GET` | `/auth/verify?token=...` | Verify email address |
 | `GET` | `/auth/google?redirect_uri=...` | Start Google OAuth 2.0 flow |
 
@@ -737,14 +737,14 @@ The server exposes a REST API on `http://127.0.0.1:9999` (or wherever you config
 
 ## Benchmarks
 
-> Measured directly on real hardware — no estimated or extrapolated numbers.
+> Measured directly on real hardware. No estimated or extrapolated numbers.
 
 ### Test Environment
 
 | Component | Detail |
 |-----------|--------|
-| **GPU** | NVIDIA GeForce RTX 3050 Ti Laptop — 4 GB GDDR6 |
-| **CPU** | Intel Core i7-11800H — 6 physical / 12 logical cores |
+| **GPU** | NVIDIA GeForce RTX 3050 Ti Laptop, 4 GB GDDR6 |
+| **CPU** | Intel Core i7-11800H, 6 physical / 12 logical cores |
 | **RAM** | 15.7 GB |
 | **OS** | Windows 11 |
 | **CUDA** | 12.4 / Driver 572.60 |
@@ -756,14 +756,14 @@ The server exposes a REST API on `http://127.0.0.1:9999` (or wherever you config
 
 Two things are measured:
 
-- **Token generation (tg)** — how fast the model produces output tokens. This is the "response speed" you feel as a user. Measured in tokens per second (T/s). Higher is better.
-- **Prompt processing (pp)** — how fast the model reads and processes your input (the system prompt, conversation history, attached files). This determines your Time to First Token (TTFT). Measured in tokens per second (T/s). Higher is better.
+- **Token generation (tg):** how fast the model produces output tokens. This is the response speed you feel as a user. Measured in tokens per second (T/s). Higher is better.
+- **Prompt processing (pp):** how fast the model reads and processes your input (the system prompt, conversation history, attached files). This determines your Time to First Token (TTFT). Measured in tokens per second (T/s). Higher is better.
 
 ### OI Optimized vs Bare Baseline
 
 Two configurations were tested on identical hardware and model.
 
-**Config A — OI Optimized** (flags: `--flash-attn --n-gpu-layers 28 --cache-type-k q8_0 --cache-type-v q8_0 --ubatch-size 1024 --threads 6`)
+**Config A: OI Optimized** (flags: `--flash-attn --n-gpu-layers 28 --cache-type-k q8_0 --cache-type-v q8_0 --ubatch-size 1024 --threads 6`)
 
 These are the exact flags the OI server passes to llama-server in production.
 
@@ -772,26 +772,26 @@ These are the exact flags the OI server passes to llama-server in production.
 | Token generation | 128 tokens | 45.22 T/s |
 | Token generation | 256 tokens | 44.72 T/s |
 | Token generation | 512 tokens | 43.34 T/s |
-| **tg average** | — | **44.43 T/s** |
+| **tg average** | (all sizes) | **44.43 T/s** |
 | Prompt processing | 128 token prompt | 1,397 T/s |
 | Prompt processing | 512 token prompt | 2,252 T/s |
 | Prompt processing | 1,024 token prompt | 2,402 T/s |
-| **pp average** | — | **2,017 T/s** |
+| **pp average** | (all sizes) | **2,017 T/s** |
 
-**Config B — Bare GPU Only** (flags: `--n-gpu-layers 28` only)
+**Config B: Bare GPU Only** (flags: `--n-gpu-layers 28` only)
 
-This is what Ollama, LM Studio, and Jan.ai ship by default — same engine, minimal configuration.
+This is what Ollama, LM Studio, and Jan.ai ship by default. Same engine, minimal configuration.
 
 | Test | Input size | Speed |
 |------|-----------|-------|
 | Token generation | 128 tokens | 43.01 T/s |
 | Token generation | 256 tokens | 42.69 T/s |
 | Token generation | 512 tokens | 41.66 T/s |
-| **tg average** | — | **42.45 T/s** |
+| **tg average** | (all sizes) | **42.45 T/s** |
 | Prompt processing | 128 token prompt | 1,275 T/s |
 | Prompt processing | 512 token prompt | 1,726 T/s |
 | Prompt processing | 1,024 token prompt | 1,626 T/s |
-| **pp average** | — | **1,542 T/s** |
+| **pp average** | (all sizes) | **1,542 T/s** |
 
 **OI's gain over the bare baseline:**
 - Token generation: +1.98 T/s (+4.7%)
@@ -807,8 +807,8 @@ OI numbers are directly measured. All other numbers are from published documenta
 
 | Tool | tg T/s | pp T/s | Notes |
 |------|:------:|:------:|-------|
-| **OI SDK — Optimized** | **44.4** | **2,017** | Measured 2026-03-30, Flash Attention + KV quant + cont-batching |
-| **OI SDK — Bare baseline** | **42.5** | **1,542** | Measured 2026-03-30, GPU only, no extras |
+| **OI SDK (Optimized)** | **44.4** | **2,017** | Measured 2026-03-30, Flash Attention + KV quant + cont-batching |
+| **OI SDK (Bare baseline)** | **42.5** | **1,542** | Measured 2026-03-30, GPU only, no extras |
 | llama.cpp direct (tuned) | ~43–46 | ~1,800–2,400 | User-configured, can match or exceed OI |
 | ExLlamaV2 | 35–55 | N/A | Custom CUDA kernels, EXL2 format only (not GGUF) |
 | Ollama | 30–42 | ~900–1,300 | Conservative defaults, no flash-attn |
@@ -817,7 +817,7 @@ OI numbers are directly measured. All other numbers are from published documenta
 | Text Gen WebUI | 25–40 | ~800–1,500 | Python/Gradio overhead, backend-dependent |
 | llama-cpp-python | 22–38 | ~700–1,200 | `logits_all=True` default hurts performance |
 | GPT4All | 4–10 | ~200–400 | GPU acceleration not well-optimized, CPU-primary |
-| AirLLM (3B model) | ~1–5 | N/A | Layer-by-layer VRAM management — designed for 70B+ on 4GB |
+| AirLLM (3B model) | ~1–5 | N/A | Layer-by-layer VRAM management, designed for running 70B+ models on 4GB GPUs |
 
 ### Why OI's Prompt Processing Advantage Matters
 
@@ -826,11 +826,11 @@ Flash Attention reduces the memory traffic for processing long inputs from O(n²
 - A 512-token system prompt: **0.23s** through OI vs **~0.47s** through Ollama
 - A 1,024-token conversation history: **0.43s** through OI vs **~0.93s** through Ollama
 
-This difference accumulates on every single request. If you have any non-trivial system prompt or conversation history, TTFT is dominated by prompt processing — not token generation.
+This difference accumulates on every single request. If you have any non-trivial system prompt or conversation history, TTFT is dominated by prompt processing, not token generation.
 
 ### Multi-User Throughput (Continuous Batching)
 
-OI enables `--parallel 8` continuous batching. Without it, requests queue — user 2 waits for user 1 to finish. With it, all 8 users share a single GPU pass every decode step.
+OI enables `--parallel 8` continuous batching. Without it, requests are queued and each user waits for the previous one to finish. With it, all 8 users share a single GPU pass every decode step.
 
 | Setup | 8-user aggregate throughput |
 |-------|----------------------------|
@@ -842,7 +842,7 @@ OI enables `--parallel 8` continuous batching. Without it, requests queue — us
 
 **Ollama, LM Studio, Jan.ai, Text Gen WebUI, and OI all use the same llama.cpp engine.** The math is identical, the CUDA kernels are identical, the GGUF files are identical. Performance differences come entirely from which flags are passed and how much overhead the wrapper adds.
 
-**ExLlamaV2** is the exception — it has hand-written CUDA kernels and EXL2 quantization, which is why it can exceed llama.cpp at single-user throughput. It requires models in EXL2 format (not GGUF — separate conversion needed). OI's speculative decoding (0.5B draft model) narrows this gap significantly.
+**ExLlamaV2** is the exception. It has hand-written CUDA kernels and EXL2 quantization, which is why it can exceed llama.cpp at single-user throughput. It requires models in EXL2 format (not GGUF; a separate conversion step is needed). OI's speculative decoding using a 0.5B draft model narrows this gap significantly.
 
 **AirLLM** solves a different problem entirely: running a 70B model on a 4 GB GPU by loading one transformer layer at a time. Speed is 1–5 T/s because each token requires many disk reads. It is not useful for a 3B model that fits entirely in VRAM.
 
@@ -860,7 +860,7 @@ OI enables `--parallel 8` continuous batching. Without it, requests queue — us
 | Text Gen WebUI | [oobabooga GitHub](https://github.com/oobabooga/text-generation-webui) community benchmarks |
 | GPT4All | Community reports |
 | AirLLM | [AirLLM GitHub](https://github.com/lyogavin/airllm) · [Towards AI writeup](https://pub.towardsai.net/run-70b-llms-on-4gb-gpu-with-airllm-795185975f3b) |
-| OI SDK results | **Directly measured** — `benchmarks/results/llama_bench_20260330_210218.json` |
+| OI SDK results | **Directly measured**, see `benchmarks/results/llama_bench_20260330_210218.json` |
 
 To run the benchmarks yourself:
 ```bash
@@ -982,8 +982,8 @@ src/
 ### What Is Secure by Default
 
 - **Local only by default.** The server binds to `127.0.0.1` and is not reachable from other machines unless you set `API_HOST=0.0.0.0`.
-- **Memory-safe.** The server is written in Rust — no buffer overflows, no use-after-free.
-- **No external calls by default.** Web tools are the only outbound HTTP — and they are disabled by default unless you explicitly send a message that triggers an intent.
+- **Memory-safe.** The server is written in Rust, which prevents buffer overflows and use-after-free vulnerabilities.
+- **No external calls by default.** Web tools are the only source of outbound HTTP calls, and they are off by default unless a user message triggers a recognized intent.
 - **Passwords never stored in plaintext.** User passwords are hashed with Argon2 before storage.
 - **API keys never stored in plaintext.** HuggingFace and OpenRouter keys are encrypted with a machine-specific key before being written to SQLite.
 
@@ -1032,10 +1032,10 @@ Third-party components: llama.cpp (MIT), Axum (MIT), Tokio (MIT), Serde (MIT/Apa
 ## Changelog
 
 ### v0.1.5 (2026-03-30)
-- Web tools module: intent-driven live data injection — weather (Open-Meteo + Nominatim), fiat currency (ExchangeRate-API, 160+ currencies), crypto prices (CoinGecko). All keyless. Parallel execution with 8s per-tool and 10s hard deadline. Results injected as system context with `[N]` citation sources.
+- Web tools module: intent-driven live data injection covering weather (Open-Meteo + Nominatim), fiat currency (ExchangeRate-API, 160+ currencies), and crypto prices (CoinGecko). All keyless. Parallel execution with 8s per-tool and 10s hard deadline. Results injected as system context with `[N]` citation sources.
 - Authentication: user registration and login, Argon2 password hashing, JWT session tokens, email verification, Google OAuth 2.0
 - Encrypted API key management: HuggingFace and OpenRouter keys stored with machine-specific encryption in SQLite
-- Tools settings API: `GET/POST /tools/settings` — enable/disable web tools, set Brave Search key
+- Tools settings API: `GET/POST /tools/settings` for enabling or disabling web tools and setting the Brave Search key
 - Mode management: `POST /mode` for runtime offline/online switching without server restart
 - Feedback endpoint: `POST /feedback` with optional admin email notification
 - Login notification tracking
@@ -1044,7 +1044,7 @@ Third-party components: llama.cpp (MIT), Axum (MIT), Tokio (MIT), Serde (MIT/Apa
 
 ### v0.1.4 (2026-03-27)
 - Lazy HNSW index rebuild: dirty-flag deferred rebuild eliminates per-insert O(n²) cost
-- Content-aware message importance scoring: replaced hardcoded `0.5` with `score_message_importance()` — role base (system=0.9, assistant=0.6, user=0.4) plus bonuses for code blocks, key concepts, length
+- Content-aware message importance scoring: replaced hardcoded `0.5` with `score_message_importance()`. Role weights: system=0.9, assistant=0.6, user=0.4. Bonuses added for code blocks, key concepts, and message length
 - Real llama-server KV cache integration: `GET /slots` for live token counts, `POST /slots/0` for erase/restore
 - Token-bucket KV entries: slot sequences divided into 64-token buckets; earlier position = higher priority
 - `sysinfo`-based memory limits: 25% of available RAM allocated to KV cache, clamped 256 MB–8 GB
@@ -1076,7 +1076,7 @@ Third-party components: llama.cpp (MIT), Axum (MIT), Tokio (MIT), Serde (MIT/Apa
 ## Citation
 
 ```
-Offline Intelligence Library — v0.1.5
+Offline Intelligence Library v0.1.5
 Author: Offline Intelligence Team
 URL: https://github.com/OfflineIntelligence/offline-intelligence
 ```
