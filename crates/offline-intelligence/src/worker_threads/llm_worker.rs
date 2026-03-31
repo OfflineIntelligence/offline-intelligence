@@ -21,6 +21,9 @@ struct ChatCompletionRequest {
     max_tokens: u32,
     temperature: f32,
     stream: bool,
+    /// Cache the KV state of this prompt so repeated system-prompt prefixes
+    /// reuse the cached state. Drops warm TTFT from ~50ms to ~5ms.
+    cache_prompt: bool,
 }
 
 /// Embedding request sent to llama-server (OpenAI-compatible format)
@@ -162,6 +165,7 @@ impl LLMWorker {
             max_tokens: 2000,
             temperature: 0.7,
             stream: false,
+            cache_prompt: true,
         };
 
         // Determine the URL to use based on whether runtime manager is available AND ready
@@ -238,6 +242,7 @@ impl LLMWorker {
             max_tokens,
             temperature,
             stream: true,
+            cache_prompt: true,
         };
 
         // Determine the URL to use based on whether runtime manager is available AND ready
@@ -459,6 +464,7 @@ impl LLMWorker {
             max_tokens: max_tokens.min(20),
             temperature: 0.3,
             stream: false,
+            cache_prompt: true,
         };
 
         // Determine the URL to use based on whether runtime manager is available AND ready

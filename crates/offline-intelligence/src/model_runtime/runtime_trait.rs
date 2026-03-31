@@ -66,8 +66,23 @@ pub struct RuntimeConfig {
     pub threads: u32,
     /// GPU layers to offload (0 = CPU only)
     pub gpu_layers: u32,
+    /// Number of parallel KV-cache slots (continuous batching slots).
+    /// Should match MAX_CONCURRENT_STREAMS. Maps to llama-server --parallel N.
+    pub parallel_slots: u32,
+    /// Micro-batch size for GPU compute. Larger values increase tensor-core
+    /// utilisation. Maps to llama-server --ubatch-size N.
+    pub ubatch_size: u32,
     /// Path to runtime binary (e.g., llama-server.exe)
     pub runtime_binary: Option<PathBuf>,
+    /// Path to draft model for speculative decoding. None = disabled.
+    /// Maps to llama-server --model-draft.
+    pub draft_model_path: Option<PathBuf>,
+    /// Maximum draft tokens generated per speculative step.
+    /// Maps to llama-server --draft-max. Default: 8.
+    pub speculative_draft_max: u32,
+    /// Minimum acceptance probability for a draft token.
+    /// Maps to llama-server --draft-p-min. Default: 0.4.
+    pub speculative_draft_p_min: f32,
     /// Additional runtime-specific configuration
     pub extra_config: serde_json::Value,
 }
@@ -83,7 +98,12 @@ impl Default for RuntimeConfig {
             batch_size: 128,
             threads: 6,
             gpu_layers: 0,
+            parallel_slots: 1,
+            ubatch_size: 512,
             runtime_binary: None,
+            draft_model_path: None,
+            speculative_draft_max: 8,
+            speculative_draft_p_min: 0.4,
             extra_config: serde_json::json!({}),
         }
     }

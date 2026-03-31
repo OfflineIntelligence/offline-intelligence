@@ -1088,7 +1088,15 @@ pub async fn switch_model(
         batch_size: state.shared_state.config.batch_size,
         threads: state.shared_state.config.threads,
         gpu_layers: state.shared_state.config.gpu_layers,
+        parallel_slots: state.shared_state.config.parallel_slots,
+        ubatch_size: state.shared_state.config.ubatch_size,
         runtime_binary: runtime_binary.clone(), // Use platform-appropriate binary
+        draft_model_path: {
+            let p = &state.shared_state.config.draft_model_path;
+            if p == "none" || p.is_empty() { None } else { Some(std::path::PathBuf::from(p)) }
+        },
+        speculative_draft_max: state.shared_state.config.speculative_draft_max,
+        speculative_draft_p_min: state.shared_state.config.speculative_draft_p_min,
         extra_config: serde_json::json!({}),
     };
 

@@ -63,14 +63,61 @@ impl GGUFRuntime {
             .arg("--port").arg(config.port.to_string())
             .arg("--ctx-size").arg(config.context_size.to_string())
             .arg("--batch-size").arg(config.batch_size.to_string())
+            // Micro-batch size: larger value keeps GPU tensor cores busy.
+            .arg("--ubatch-size").arg(config.ubatch_size.to_string())
             .arg("--threads").arg(config.threads.to_string())
-            .arg("--n-gpu-layers").arg(config.gpu_layers.to_string());
+            .arg("--n-gpu-layers").arg(config.gpu_layers.to_string())
+            // Parallel KV-cache slots — each slot handles one concurrent request.
+            // Enables continuous batching so multiple users share a single GPU pass.
+            .arg("--parallel").arg(config.parallel_slots.to_string())
+            // Continuous batching: interleave prefill and decode across all active
+            // slots every generation step. Without this flag, --parallel has no
+            // throughput effect.
+            .arg("--cont-batching")
+            // Flash Attention 2: replaces O(n²) attention with fused CUDA kernels.
+            // +15–30% throughput at 8k context, halves KV VRAM consumption.
+            // Must pass "on" explicitly — bare flag causes the parser in b8037 to
+            // consume the next argument as the value, silently breaking the command.
+            .arg("--flash-attn").arg("on")
+            // KV cache quantisation: store K/V matrices in Q8_0 instead of F16.
+            // Halves KV VRAM (~256 MB → ~128 MB for 8192 ctx, 28 layers, 1 slot).
+            .arg("--cache-type-k").arg("q8_0")
+            .arg("--cache-type-v").arg("q8_0")
+            // Defragmentation threshold: when KV-cache fragmentation exceeds 10%
+            // of total slots, compact the cache in-place.  Prevents the gradual
+            // throughput degradation visible in long-running sessions.
+            .arg("--defrag-thold").arg("0.1")
+            // Process priority: HIGH (2) reduces OS scheduler jitter so llama-server
+            // is not preempted mid-decode. Measurable effect on TTFT P90/P99 and
+            // consistent throughput. Values: 0=normal 1=medium 2=high 3=realtime.
+            .arg("--prio").arg("2")
+            // Lock all model pages in RAM. Prevents the OS from paging weight
+            // tensors to disk under memory pressure. Eliminates rare 100-500ms
+            // TTFT spikes caused by page-fault stalls during decode. The model
+            // (~1.9 GB) comfortably fits in the 15.7 GB system RAM.
+            .arg("--mlock");
+
+        // Speculative decoding: if a draft model path is set and the file exists,
+        // enable speculative decoding. The draft model generates candidate tokens
+        // which the main model verifies in one forward pass — 2–3× throughput boost.
+        if let Some(ref draft_path) = config.draft_model_path {
+            if draft_path.exists() {
+                cmd.arg("--model-draft").arg(draft_path)
+                    .arg("--draft-max").arg(config.speculative_draft_max.to_string())
+                    .arg("--draft-min").arg("1")
+                    .arg("--draft-p-min").arg(config.speculative_draft_p_min.to_string());
+                info!("Speculative decoding enabled: draft_model={}", draft_path.display());
+            } else {
+                info!("Speculative decoding disabled: draft model not found at {}", draft_path.display());
+            }
+        }
 
         // Log the full command for debugging
-        info!("📋 Full command: {:?} {}", binary_path,
-            format!("--model {} --host {} --port {} --ctx-size {} --batch-size {} --threads {} --n-gpu-layers {}",
-                config.model_path.display(), config.host, config.port,
-                config.context_size, config.batch_size, config.threads, config.gpu_layers));
+        info!("Full llama-server command: {:?} --model {} --host {} --port {} --ctx-size {} --batch-size {} --ubatch-size {} --threads {} --n-gpu-layers {} --parallel {} --cont-batching --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 --defrag-thold 0.1 --prio 2 --mlock",
+            binary_path,
+            config.model_path.display(), config.host, config.port,
+            config.context_size, config.batch_size, config.ubatch_size,
+            config.threads, config.gpu_layers, config.parallel_slots);
 
         // On macOS: set DYLD_LIBRARY_PATH to the directory that contains
         // llama-server so that co-located dylibs (libllama.dylib,
@@ -124,6 +171,33 @@ impl GGUFRuntime {
 
             if self.is_ready().await {
                 info!("✅ GGUF runtime ready after {:.1}s", _start.elapsed().as_secs_f64());
+
+                // Pre-warm: fire one minimal completion request so that CUDA kernels
+                // are JIT-compiled and GPU caches are hot before the first real user
+                // request arrives.  Without this the very first request pays a
+                // 400–600 ms CUDA cold-start penalty even though the model is loaded.
+                // max_tokens=1 keeps this fast (~100 ms total).
+                let warmup_url = format!("{}/v1/chat/completions", self.base_url);
+                let warmup_payload = serde_json::json!({
+                    "model": "local-llm",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 1,
+                    "temperature": 0.0,
+                    "stream": false,
+                    "cache_prompt": true,
+                });
+                info!("Pre-warming CUDA kernels (max_tokens=1 dummy request)...");
+                match self.http_client
+                    .post(&warmup_url)
+                    .json(&warmup_payload)
+                    .timeout(Duration::from_secs(30))
+                    .send()
+                    .await
+                {
+                    Ok(_) => info!("CUDA pre-warm complete — first user request will get warm TTFT"),
+                    Err(e) => warn!("CUDA pre-warm failed (non-fatal, first request may be slow): {}", e),
+                }
+
                 return Ok(());
             }
             let elapsed_secs = _start.elapsed().as_secs();

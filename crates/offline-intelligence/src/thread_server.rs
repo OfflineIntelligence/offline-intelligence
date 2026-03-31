@@ -266,7 +266,16 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
                 batch_size: cfg_bg.batch_size,
                 threads: cfg_bg.threads,
                 gpu_layers: cfg_bg.gpu_layers,
+                parallel_slots: cfg_bg.parallel_slots,
+                ubatch_size: cfg_bg.ubatch_size,
                 runtime_binary: if cfg_bg.llama_bin.is_empty() { None } else { Some(std::path::PathBuf::from(&cfg_bg.llama_bin)) },
+                draft_model_path: if cfg_bg.draft_model_path == "none" || cfg_bg.draft_model_path.is_empty() {
+                    None
+                } else {
+                    Some(std::path::PathBuf::from(&cfg_bg.draft_model_path))
+                },
+                speculative_draft_max: cfg_bg.speculative_draft_max,
+                speculative_draft_p_min: cfg_bg.speculative_draft_p_min,
                 extra_config: serde_json::json!({}),
             };
 
