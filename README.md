@@ -261,7 +261,7 @@ The library follows a modular design with clear separation of concerns:
 ### Rust Usage
 
 Installation:
-Add `offline-intelligence = "0.1.4"` to your Cargo.toml dependencies
+Add `offline-intelligence = "0.1.6"` to your Cargo.toml dependencies
 
 The Rust crate IS the server. You embed and start it directly in your application.
 
@@ -300,7 +300,7 @@ async fn main() -> anyhow::Result<()> {
 
 Installation:
 ```bash
-pip install offline-intelligence==0.1.4
+pip install offline-intelligence==0.1.6
 ```
 
 The Python package is a pure HTTP client. The Rust server must be running first.
@@ -354,7 +354,7 @@ ai = OfflineIntelligence(cfg)
 
 Installation:
 ```bash
-npm install offline-intelligence@0.1.4
+npm install offline-intelligence@0.1.6
 ```
 
 The JavaScript package is a pure HTTP client (axios-based). The Rust server must be running first.
@@ -422,7 +422,7 @@ Add the JitPack repository and dependency to your pom.xml or build.gradle:
 - Repository: https://jitpack.io
 - GroupId: com.github.OfflineIntelligence
 - ArtifactId: offline-intelligence
-- Version: v0.1.4
+- Version: v0.1.6
 
 Maven:
 ```xml
@@ -436,7 +436,7 @@ Maven:
 <dependency>
     <groupId>com.github.OfflineIntelligence</groupId>
     <artifactId>offline-intelligence</artifactId>
-    <version>v0.1.4</version>
+    <version>v0.1.6</version>
 </dependency>
 ```
 
@@ -447,7 +447,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.github.OfflineIntelligence:offline-intelligence:v0.1.4'
+    implementation 'com.github.OfflineIntelligence:offline-intelligence:v0.1.6'
 }
 ```
 
@@ -515,7 +515,7 @@ include(FetchContent)
 FetchContent_Declare(
     offline_intelligence
     GIT_REPOSITORY https://github.com/OfflineIntelligence/offline-intelligence.git
-    GIT_TAG        v0.1.4
+    GIT_TAG        v0.1.6
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(offline_intelligence)
@@ -526,7 +526,7 @@ target_link_libraries(your_target PRIVATE offline_intelligence)
 
 Installation — Option B (Conan):
 ```bash
-conan install --requires="offline-intelligence/0.1.4" --build=missing
+conan install --requires="offline-intelligence/0.1.6" --build=missing
 ```
 
 Installation — Option C (manual):
@@ -597,19 +597,19 @@ Package Managers:
 
 Rust (Cargo):
 ```bash
-cargo add offline-intelligence@0.1.4
+cargo add offline-intelligence@0.1.6
 # or in Cargo.toml:
-# offline-intelligence = "0.1.4"
+# offline-intelligence = "0.1.6"
 ```
 
 Python (PyPI):
 ```bash
-pip install offline-intelligence==0.1.4
+pip install offline-intelligence==0.1.6
 ```
 
 JavaScript/Node.js (npm):
 ```bash
-npm install offline-intelligence@0.1.4
+npm install offline-intelligence@0.1.6
 ```
 
 Java (JitPack):
@@ -621,7 +621,7 @@ Java (JitPack):
 <dependency>
     <groupId>com.github.OfflineIntelligence</groupId>
     <artifactId>offline-intelligence</artifactId>
-    <version>v0.1.4</version>
+    <version>v0.1.6</version>
 </dependency>
 ```
 
@@ -630,7 +630,7 @@ C++ (CMake FetchContent):
 FetchContent_Declare(
     offline_intelligence
     GIT_REPOSITORY https://github.com/OfflineIntelligence/offline-intelligence.git
-    GIT_TAG v0.1.4
+    GIT_TAG v0.1.6
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(offline_intelligence)
@@ -638,7 +638,7 @@ FetchContent_MakeAvailable(offline_intelligence)
 
 C++ (Conan):
 ```bash
-conan install --requires="offline-intelligence/0.1.4" --build=missing
+conan install --requires="offline-intelligence/0.1.6" --build=missing
 ```
 
 ## End-to-End Setup
@@ -807,24 +807,24 @@ The Offline Intelligence Library works with GGUF format models. You can download
 Package Managers:
 
 Rust (Cargo):
-Add `offline-intelligence = "0.1.4"` to your Cargo.toml dependencies
+Add `offline-intelligence = "0.1.6"` to your Cargo.toml dependencies
 
 Python (PyPI):
-Run `pip install offline-intelligence==0.1.4`
+Run `pip install offline-intelligence==0.1.6`
 
 JavaScript/Node.js (npm):
-Run `npm install offline-intelligence@0.1.4`
+Run `npm install offline-intelligence@0.1.6`
 
 Java (JitPack):
 Add the JitPack repository and dependency to your pom.xml or build.gradle:
 - Repository: https://jitpack.io
 - GroupId: com.github.OfflineIntelligence
 - ArtifactId: offline-intelligence
-- Version: v0.1.4
+- Version: v0.1.6
 
 C++ (Header-only via CMake FetchContent or Conan):
-- CMake: Use `FetchContent_Declare` with `GIT_TAG v0.1.4`
-- Conan: `conan install --requires="offline-intelligence/0.1.4"`
+- CMake: Use `FetchContent_Declare` with `GIT_TAG v0.1.6`
+- Conan: `conan install --requires="offline-intelligence/0.1.6"`
 - Manual: Copy `bindings/cpp/include/offline_intelligence/offline_intelligence.hpp`
   Requires: `cpp-httplib` and `nlohmann_json` headers
 
@@ -1474,6 +1474,24 @@ Community support is available through GitHub Issues for bug reports, Discussion
 Enterprise support options include priority support for commercial users, professional services for consulting and custom development, and training sessions.
 
 ## Changelog
+
+### v0.1.6 (2026-05-22)
+- GPU runtime dependency management (`runtime_deps.rs`): auto-download for all GPU backends
+  - CUDA 12.4/13.1 redist from llama.cpp GitHub releases (Windows/Linux)
+  - AMD ROCm Linux: distro-aware `.deb` download (Ubuntu 22.04 / 24.04)
+  - AMD HIP Windows: engine-bundle DLL probe (`amdhip64.dll`)
+  - Intel Level Zero Linux: `libze1` `.deb` from oneapi-src/level-zero v1.28.6
+  - Vulkan Windows: LunarG VulkanRT-1.3.283.0 ZIP auto-download
+  - Vulkan Linux: distro-aware `libvulkan1` `.deb`
+- Pure-Rust `.deb` extraction: ar format parser, xz2/zstd/gz decompression, no root/no dpkg required
+- `BoundedReader`: streams `data.tar.*` section without loading full `.deb` into RAM
+- Path traversal guard on all tar extraction paths
+- `walkdir`-based recursive `find_probe_dir`: correctly locates `.so`/`.dll` at any extraction depth
+- Linux distro detection via `/etc/os-release` for correct package URL selection
+- AMD GPU hardware now routes to HIP engine in registry recommendation
+- `engine_stub.install_path` fix: populated from binary parent dir so bundle probe actually runs
+- TLS certificate generation scripts (`generate_certs.bat` / `generate_certs.sh`)
+- All binding version strings updated: Python, JavaScript, Java, C++
 
 ### v0.1.4 (2026-03-27)
 - Lazy HNSW index rebuild: `EmbeddingStore` now uses an `AtomicBool` dirty flag; index is rebuilt once on the first search after inserts, eliminating the previous per-insert O(n²) rebuild cost
