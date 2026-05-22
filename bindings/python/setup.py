@@ -9,7 +9,7 @@ if os.path.exists(readme_path):
 
 setup(
     name="offline-intelligence",
-    version="0.1.5",
+    version="0.1.6",
     author="Offline Intelligence Team",
     author_email="team@offlineintelligence.com",
     description="Python bindings for Offline Intelligence Library",

@@ -1,4 +1,4 @@
-
+# File: ChatInterface.py
 import http.client
 import json
 import sys
@@ -44,7 +44,7 @@ class StreamingChatClient:
             
             buffer = b""
             while True:
-
+                # Read one byte at a time for real-time streaming
                 chunk = response.read(1)
                 if not chunk:
                     break
@@ -73,7 +73,7 @@ class StreamingChatClient:
             return None
             
         try:
-
+            # Handle SSE format: "data: {json}"
             if line.startswith(b'data: '):
                 json_str = line[6:].decode('utf-8').strip()
                 if json_str == '[DONE]':
@@ -91,14 +91,14 @@ class StreamingChatClient:
                     return message.get('content', '')
                     
         except json.JSONDecodeError:
-
+            # Try to extract content with regex as last resort
             try:
                 line_str = line.decode('utf-8', errors='ignore')
                 if '"content":' in line_str:
                     match = re.search(r'"content":\s*"([^"]*)"', line_str)
                     if match:
                         content = match.group(1)
-
+                        # Unescape JSON characters
                         content = content.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\')
                         return content
             except:
@@ -121,7 +121,7 @@ class StreamingChatClient:
         headers = {'Content-Type': 'application/json'}
         
         try:
-            conn.request("POST", "/generate", payload, headers)
+            conn.request("POST", "/generate", payload, headers)  # Non-streaming endpoint
             response = conn.getresponse()
             
             if response.status != 200:
@@ -162,16 +162,16 @@ def main():
             streaming_worked = False
             
             try:
-
+                # Attempt streaming
                 for chunk in client.send_message_stream(history):
                     if chunk:
                         print(chunk, end="", flush=True)
                         full_reply += chunk
                         streaming_worked = True
-
+                        # Small delay to make streaming visible
                         time.sleep(0.01)
                 
-                print()
+                print()  # New line after streaming
                 
             except Exception as e:
                 print(f"\nStreaming failed: {e}")

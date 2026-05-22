@@ -1,3 +1,8 @@
+//! Runtime Manager
+//!
+//! Orchestrates model runtime selection, initialization, and lifecycle management.
+//! Automatically selects the appropriate runtime based on model format.
+//! Lock-free implementation using ArcSwap for atomic pointer swapping.
 
 use super::runtime_trait::*;
 use super::format_detector::FormatDetector;
@@ -6,15 +11,16 @@ use crate::model_runtime::{GGUFRuntime, GGMLRuntime, ONNXRuntime, TensorRTRuntim
 use std::sync::Arc;
 use arc_swap::ArcSwap;
 use tracing::{info, error};
-use super::*;
 
+/// Runtime holder for lock-free access
 struct RuntimeHolder {
     runtime: Option<Box<dyn ModelRuntime>>,
     config: Option<RuntimeConfig>,
 }
 
+/// Runtime Manager - manages active model runtime
 pub struct RuntimeManager {
-    
+    /// Currently active runtime (lock-free via ArcSwap)
     holder: Arc<ArcSwap<RuntimeHolder>>,
 }
 
@@ -28,14 +34,17 @@ impl RuntimeManager {
         }
     }
 
+    /// Initialize runtime with automatic format detection and platform-appropriate binary
     pub async fn initialize_auto(&self, mut config: RuntimeConfig) -> anyhow::Result<String> {
         info!("Auto-detecting model format from: {}", config.model_path.display());
         
+        // Check if model path is empty (no model selected)
         if config.model_path.as_os_str().is_empty() {
             info!("No model selected, skipping runtime initialization");
             return Ok(config.host.clone() + ":" + &config.port.to_string());
         }
         
+        // Detect format from file extension
         let detected_format = FormatDetector::detect_from_path(&config.model_path)
             .ok_or_else(|| anyhow::anyhow!(
                 "Could not detect model format from file: {}. Supported formats: {:?}",
@@ -45,8 +54,10 @@ impl RuntimeManager {
 
         info!("Detected format: {}", detected_format.name());
 
+        // Override config format with detected format
         config.format = detected_format;
         
+        // Auto-detect and set appropriate runtime binary based on platform and hardware
         if config.runtime_binary.is_none() {
             let hw_caps = HardwareCapabilities::default();
             if let Some(binary_path) = hw_caps.get_runtime_binary_path() {
@@ -62,12 +73,14 @@ impl RuntimeManager {
         self.initialize(config).await
     }
 
+    /// Initialize runtime with specified configuration
     pub async fn initialize(&self, config: RuntimeConfig) -> anyhow::Result<String> {
         info!("Initializing runtime for format: {}", config.format.name());
 
+        // Check if model path is empty (no model selected)
         if config.model_path.as_os_str().is_empty() {
             info!("No model selected, skipping runtime initialization");
-            
+            // Store an empty runtime holder but return the expected base URL
             let base_url = config.host.clone() + ":" + &config.port.to_string();
             let new_holder = Arc::new(RuntimeHolder {
                 runtime: None,
@@ -77,8 +90,10 @@ impl RuntimeManager {
             return Ok(base_url);
         }
         
+        // Shutdown existing runtime if any
         self.shutdown().await?;
 
+        // Create appropriate runtime based on format
         let mut runtime: Box<dyn ModelRuntime> = match config.format {
             ModelFormat::GGUF => Box::new(GGUFRuntime::new()),
             ModelFormat::GGML => Box::new(GGMLRuntime::new()),
@@ -88,6 +103,7 @@ impl RuntimeManager {
             ModelFormat::CoreML => Box::new(CoreMLRuntime::new()),
         };
 
+        // Initialize the runtime
         runtime.initialize(config.clone()).await
             .map_err(|e| {
                 error!("Failed to initialize {} runtime: {}", config.format.name(), e);
@@ -104,6 +120,7 @@ impl RuntimeManager {
         info!("  GPU Support: {}", metadata.supports_gpu);
         info!("  Streaming: {}", metadata.supports_streaming);
 
+        // Atomically store the new runtime
         let new_holder = Arc::new(RuntimeHolder {
             runtime: Some(runtime),
             config: Some(config),
@@ -113,11 +130,13 @@ impl RuntimeManager {
         Ok(base_url)
     }
 
+    /// Get the current runtime's base URL (lock-free)
     pub async fn get_base_url(&self) -> Option<String> {
         let holder = self.holder.load();
         holder.runtime.as_ref().map(|r| r.base_url())
     }
 
+    /// Check if runtime is ready (lock-free read)
     pub async fn is_ready(&self) -> bool {
         let holder = self.holder.load();
         match holder.runtime.as_ref() {
@@ -126,6 +145,7 @@ impl RuntimeManager {
         }
     }
 
+    /// Perform health check (lock-free read)
     pub async fn health_check(&self) -> anyhow::Result<String> {
         let holder = self.holder.load();
         match holder.runtime.as_ref() {
@@ -134,18 +154,24 @@ impl RuntimeManager {
         }
     }
 
+    /// Get runtime metadata (lock-free read)
     pub async fn get_metadata(&self) -> Option<RuntimeMetadata> {
         let holder = self.holder.load();
         holder.runtime.as_ref().map(|r| r.metadata())
     }
 
+    /// Shutdown current runtime (atomic replacement)
     pub async fn shutdown(&self) -> anyhow::Result<()> {
-        
+        // Atomically replace with empty holder so new load() calls see no runtime.
         let old_holder = self.holder.swap(Arc::new(RuntimeHolder {
             runtime: None,
             config: None,
         }));
 
+        // Retry Arc::try_unwrap up to 10 times (100 ms total).
+        // ArcSwap load() guards are held for nanoseconds; any concurrent caller
+        // that loaded old_holder just before the swap above will have dropped its
+        // guard by the second or third attempt at most.
         let mut attempt = old_holder;
         for i in 0..10u8 {
             match Arc::try_unwrap(attempt) {
@@ -162,7 +188,8 @@ impl RuntimeManager {
                 }
             }
         }
-        
+        // Could not get exclusive ownership — the process is exiting anyway
+        // (std::process::exit(0) in the ExitRequested handler terminates everything).
         tracing::warn!(
             "RuntimeManager::shutdown: could not acquire exclusive Arc ownership after 10 retries. \
              llama-server will be killed by the OS on process exit."
@@ -171,6 +198,7 @@ impl RuntimeManager {
         Ok(())
     }
 
+    /// Hot-swap model (shutdown current, initialize new)
     pub async fn hot_swap(&self, new_config: RuntimeConfig) -> anyhow::Result<String> {
         info!("Performing hot-swap to new model: {}", new_config.model_path.display());
         
@@ -178,11 +206,13 @@ impl RuntimeManager {
         self.initialize(new_config).await
     }
 
+    /// Get current configuration (lock-free)
     pub async fn get_current_config(&self) -> Option<RuntimeConfig> {
         let holder = self.holder.load();
         holder.config.clone()
     }
 
+    /// Perform inference (non-streaming, lock-free read)
     pub async fn generate(&self, request: InferenceRequest) -> anyhow::Result<InferenceResponse> {
         let holder = self.holder.load();
         match holder.runtime.as_ref() {
@@ -191,6 +221,7 @@ impl RuntimeManager {
         }
     }
 
+    /// Perform streaming inference (lock-free read)
     pub async fn generate_stream(
         &self,
         request: InferenceRequest,
@@ -211,7 +242,8 @@ impl Default for RuntimeManager {
 
 impl Drop for RuntimeManager {
     fn drop(&mut self) {
-        
+        // Runtime cleanup happens in shutdown()
+        // This is just a safety net
     }
 }
 
@@ -233,20 +265,23 @@ mod tests {
         
         let config = RuntimeConfig {
             model_path: PathBuf::from("test.gguf"),
-            format: ModelFormat::GGUF, 
+            format: ModelFormat::GGUF, // Will be overridden
             ..Default::default()
         };
 
+        // This will fail because the file doesn't exist, but tests the detection logic
         let result = manager.initialize_auto(config).await;
-        assert!(result.is_err()); 
+        assert!(result.is_err()); // Expected to fail - file doesn't exist
     }
     
     #[test]
     fn test_platform_detection() {
         let hw_caps = HardwareCapabilities::default();
         
+        // Verify that platform detection returns a valid platform
         assert!(matches!(hw_caps.platform, Platform::Windows | Platform::Linux | Platform::MacOS));
         
+        // Verify that architecture detection returns a valid architecture
         assert!(matches!(
             hw_caps.architecture,
             HardwareArchitecture::X86_64 | HardwareArchitecture::Aarch64 | HardwareArchitecture::Other(_)
@@ -255,18 +290,23 @@ mod tests {
     
     #[tokio::test]
     async fn test_auto_binary_selection() {
-        
+        // Create a config without specifying a binary path
         let config = RuntimeConfig {
             model_path: PathBuf::from("test.gguf"),
             format: ModelFormat::GGUF,
-            runtime_binary: None, 
+            runtime_binary: None, // Intentionally set to None
             ..Default::default()
         };
         
         let manager = RuntimeManager::new();
         
+        // The initialize_auto method should attempt to select an appropriate binary
+        // based on platform. It will fail due to missing file but should at least
+        // try to select a platform-appropriate binary.
         let result = manager.initialize_auto(config).await;
         
+        // The result will be an error because the file doesn't exist, but the
+        // platform detection part should work
         assert!(result.is_err());
     }
     
@@ -274,6 +314,7 @@ mod tests {
     async fn test_hot_swap_functionality() {
         let manager = RuntimeManager::new();
         
+        // Test that hot-swap works properly
         let config1 = RuntimeConfig {
             model_path: PathBuf::from("model1.gguf"),
             format: ModelFormat::GGUF,
@@ -290,10 +331,14 @@ mod tests {
             ..Default::default()
         };
         
+        // Initialize first config
         let result1 = manager.initialize_auto(config1).await;
         
+        // Hot-swap to second config
         let result2 = manager.hot_swap(config2).await;
         
+        // Both operations will fail due to missing files, but the process should complete
+        // without crashing
         assert!(result2.is_ok() || result2.is_err());
         
         manager.shutdown().await.unwrap();
@@ -303,6 +348,7 @@ mod tests {
     async fn test_multiple_format_support() {
         let manager = RuntimeManager::new();
         
+        // Test different model formats
         let formats = [
             ModelFormat::GGUF,
             ModelFormat::GGML,
@@ -323,6 +369,7 @@ mod tests {
             
             let result = manager.initialize(config).await;
             
+            // Each format should be attempted without crashing the system
             assert!(result.is_ok() || result.is_err());
         }
         

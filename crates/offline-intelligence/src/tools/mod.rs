@@ -1,3 +1,18 @@
+//! Web tools module — intent-driven external API integrations.
+//!
+//! Detects user intent from the latest message and calls the appropriate
+//! free public APIs (no keys required). Results are injected as a system
+//! context block before the LLM receives the conversation.
+//!
+//! Supported tools:
+//!   - Weather  — Open-Meteo + Nominatim geocoding (keyless)
+//!   - Currency — ExchangeRate-API fiat (keyless, 160+ currencies)
+//!   - Crypto   — CoinGecko free API (keyless)
+//!
+//! Timeout policy (applies to all models and modes — online/offline, Windows/macOS):
+//!   - Each individual tool: 8 seconds (per-tool cap)
+//!   - Entire run_tools() call: 10 seconds (hard deadline)
+//!   - If all tools time out / fail: returns None → LLM answers from training data
 
 pub mod detector;
 pub mod weather;
@@ -6,10 +21,14 @@ pub mod currency;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+/// Timeout for a single tool's HTTP calls (e.g. one weather request).
 const TOOL_TIMEOUT_SECS: u64 = 8;
 
+/// Hard deadline for the entire run_tools() execution (all tools combined).
+/// Tools run in parallel so this is effectively the slowest tool's cap.
 const TOTAL_TIMEOUT_SECS: u64 = 10;
 
+/// A single cited source shown in the frontend citation panel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
     pub id: usize,
@@ -18,21 +37,30 @@ pub struct Source {
     pub snippet: String,
 }
 
+/// Aggregated result from one or more tools.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResults {
-    
+    /// Numbered citation sources for the frontend panel.
     pub sources: Vec<Source>,
-    
+    /// Concatenated context text to prepend as a system message for the LLM.
     pub context: String,
 }
 
+/// What tool(s) the detector thinks should run for this user message.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolIntent {
-    Weather(String),     
+    Weather(String),     // location string
     Currency { from: String, to: String, amount: f64 },
     Crypto { coin: String, vs: String },
 }
 
+/// Run all detected tools in parallel and aggregate results.
+///
+/// Returns `None` when:
+///   - no intents were detected for the message
+///   - all tool calls failed or timed out (graceful offline fallback)
+///
+/// Enforces a hard 10-second deadline so slow public APIs never stall the LLM.
 pub async fn run_tools(
     user_message: &str,
     http_client: &reqwest::Client,
@@ -47,6 +75,7 @@ pub async fn run_tools(
         intents.iter().map(|i| format!("{:?}", i)).collect::<Vec<_>>()
     );
 
+    // Apply the hard total deadline around the entire fetch + aggregate phase.
     match tokio::time::timeout(
         std::time::Duration::from_secs(TOTAL_TIMEOUT_SECS),
         run_tools_inner(http_client, intents),
@@ -64,18 +93,19 @@ pub async fn run_tools(
     }
 }
 
+/// Inner implementation (wrapped by the hard deadline in `run_tools`).
 async fn run_tools_inner(
     http_client: &reqwest::Client,
     intents: Vec<ToolIntent>,
 ) -> Option<ToolResults> {
-    
+    // Spawn all tools concurrently, each with its own per-tool timeout.
     let mut handles: Vec<tokio::task::JoinHandle<Option<(Vec<Source>, String)>>> = Vec::new();
 
     for intent in intents {
         let client = http_client.clone();
 
         handles.push(tokio::spawn(async move {
-            
+            // Per-tool timeout: if a single public API hangs, we give up cleanly.
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(TOOL_TIMEOUT_SECS),
                 async {
@@ -117,6 +147,7 @@ async fn run_tools_inner(
         }));
     }
 
+    // Collect all results (handles run in parallel; awaiting them is just joining).
     let mut all_sources: Vec<Source> = Vec::new();
     let mut context_parts: Vec<String> = Vec::new();
     let mut id_counter = 1usize;
@@ -136,12 +167,14 @@ async fn run_tools_inner(
         return None;
     }
 
+    // Build numbered citation references for the context
     let citation_map: String = all_sources
         .iter()
         .map(|s| format!("[{}] {} — {}", s.id, s.title, s.url))
         .collect::<Vec<_>>()
         .join("\n");
 
+    // Compute full calendar date from Unix timestamp — no external crates needed.
     let today_str = {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

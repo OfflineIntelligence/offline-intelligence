@@ -1,3 +1,9 @@
+//! Thread-based server implementation
+//!
+//! This module provides the server startup that uses thread-based
+//! shared memory architecture. All API handlers access state through
+//! Arc-wrapped shared memory (UnifiedAppState) — zero network hops
+//! between components. The only network call is to the localhost llama-server.
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -13,6 +19,7 @@ use crate::{
     model_management::ModelManager,
 };
 
+/// Thread-based unified application state (internal, used during initialization)
 #[derive(Clone)]
 pub struct ThreadBasedAppState {
     pub shared_state: Arc<SharedState>,
@@ -23,18 +30,111 @@ pub struct ThreadBasedAppState {
     pub llm_worker: Arc<LLMWorker>,
 }
 
+/// Run server with thread-based architecture
+///
+/// # Arguments
+/// * `cfg`     - Server configuration
+/// * `port_tx` - Optional channel to communicate the selected port back to caller.
+///               Used when the configured port is unavailable and a random port is selected.
 pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sender<u16>>) -> anyhow::Result<()> {
     crate::telemetry::init_tracing();
     crate::metrics::init_metrics();
     cfg.print_config();
 
+    // ── TLS: load certificate + key early so misconfiguration is a hard startup
+    // error before any socket is bound or threads are spawned.
+    // This gives operators a clear, immediate error message instead of a cryptic
+    // runtime failure when the first HTTPS request arrives.
+    let tls_acceptor: Option<tokio_rustls::TlsAcceptor> = if cfg.tls_enabled {
+        use rustls_pemfile::{certs, private_key};
+        use tokio_rustls::rustls::{self, pki_types::CertificateDer};
+
+        // ── Validate file presence before attempting to parse ────────────────
+        if !std::path::Path::new(&cfg.tls_cert_path).exists() {
+            anyhow::bail!(
+                "TLS_CERT_PATH file not found: '{}'\n\
+                 Hint: run generate_certs.sh (Linux/macOS) or generate_certs.bat (Windows)\n\
+                 to create a self-signed certificate for testing, or supply a real certificate\n\
+                 from your CA.",
+                cfg.tls_cert_path
+            );
+        }
+        if !std::path::Path::new(&cfg.tls_key_path).exists() {
+            anyhow::bail!(
+                "TLS_KEY_PATH file not found: '{}'\n\
+                 Hint: run generate_certs.sh (Linux/macOS) or generate_certs.bat (Windows)\n\
+                 to create a matching private key for testing.",
+                cfg.tls_key_path
+            );
+        }
+
+        // ── Load certificate chain (PEM) ─────────────────────────────────────
+        let cert_bytes = std::fs::read(&cfg.tls_cert_path)
+            .map_err(|e| anyhow::anyhow!("Cannot read TLS_CERT_PATH '{}': {}", cfg.tls_cert_path, e))?;
+        let cert_chain: Vec<CertificateDer<'static>> =
+            certs(&mut cert_bytes.as_slice())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| anyhow::anyhow!(
+                    "Failed to parse TLS certificate in '{}': {}\n\
+                     The file must be PEM encoded (begins with -----BEGIN CERTIFICATE-----).",
+                    cfg.tls_cert_path, e
+                ))?;
+        if cert_chain.is_empty() {
+            anyhow::bail!(
+                "No certificates found in TLS_CERT_PATH: '{}'\n\
+                 The file must contain at least one PEM-encoded certificate.",
+                cfg.tls_cert_path
+            );
+        }
+
+        // ── Load private key (PEM, any supported format) ──────────────────────
+        let key_bytes = std::fs::read(&cfg.tls_key_path)
+            .map_err(|e| anyhow::anyhow!("Cannot read TLS_KEY_PATH '{}': {}", cfg.tls_key_path, e))?;
+        let private_key = private_key(&mut key_bytes.as_slice())
+            .map_err(|e| anyhow::anyhow!(
+                "Failed to parse private key in '{}': {}\n\
+                 The file must be PEM encoded (PKCS#8 or PKCS#1 RSA format).",
+                cfg.tls_key_path, e
+            ))?
+            .ok_or_else(|| anyhow::anyhow!(
+                "No private key found in TLS_KEY_PATH: '{}'\n\
+                 Common causes:\n\
+                 - File is empty or not PEM encoded\n\
+                 - File contains only a certificate (cert and key must be separate files)\n\
+                 - Key format is not supported (use PKCS#8 or PKCS#1 RSA)",
+                cfg.tls_key_path
+            ))?;
+
+        // ── Build rustls ServerConfig ─────────────────────────────────────────
+        let server_cfg = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, private_key)
+            .map_err(|e| anyhow::anyhow!(
+                "TLS configuration rejected.\n\
+                 Cert : {}\n\
+                 Key  : {}\n\
+                 Error: {}\n\
+                 Most likely cause: the certificate and private key do not match.",
+                cfg.tls_cert_path, cfg.tls_key_path, e
+            ))?;
+
+        info!(
+            "🔒 TLS certificate loaded — HTTPS will be served on port {}",
+            cfg.api_port
+        );
+        Some(tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(server_cfg)))
+    } else {
+        None
+    };
+
     info!("Starting thread-based server architecture");
 
-    let memory_db_path = dirs::data_dir()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-        .join("Aud.io")
-        .join("data")
-        .join("memory.db");
+    // ── Phase 1: Fast setup (database + managers) ─────────────────────────────
+    // Everything here finishes in < 10 seconds so the port can be bound and
+    // communicated to the main thread well within its 60-second timeout.
+
+    // Initialize database
+    let memory_db_path = crate::utils::PathResolver::db_path();
 
     if let Some(parent) = memory_db_path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -50,7 +150,8 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
             Arc::new(db)
         }
         Err(e) => {
-            
+            // In-memory fallback means ALL user data (conversations, API key metadata,
+            // settings) is lost on every restart. This must be clearly visible.
             error!(
                 "❌ CRITICAL: Failed to open SQLite database at {}: {}\n\
                  Falling back to IN-MEMORY storage — all user data will be lost on exit.\n\
@@ -61,8 +162,10 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
         }
     };
 
+    // Shared state
     let mut shared_state = SharedState::new(cfg.clone(), memory_database.clone())?;
 
+    // Model Manager (catalog scan, usually < 3 s)
     info!("📦 Initializing Model Manager");
     match ModelManager::new() {
         Ok(model_manager) => {
@@ -78,6 +181,8 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
         Err(e) => warn!("⚠️  Failed to create model manager: {}", e),
     }
 
+    // Engine Manager - BLOCK on startup until engine is ready (like Ollama)
+    // This ensures the app is fully ready before accepting connections
     info!("⚙️  Initializing Engine Manager (blocking until ready)...");
     match crate::engine_management::EngineManager::new() {
         Ok(engine_manager) => {
@@ -89,13 +194,12 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
                     shared_state.engine_available.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 Ok(false) => {
-                    
-                    info!("⏳ No engine found — starting in online-only mode. Download from the Models page.");
+                    error!("❌ No engine found — local inference is unavailable. Download an engine from the Models page.");
                     shared_state.engine_manager = Some(engine_manager_arc);
                     shared_state.engine_available.store(false, std::sync::atomic::Ordering::Relaxed);
                 }
                 Err(e) => {
-                    warn!("⚠️  Engine manager scan failed: {}", e);
+                    error!("❌ Engine manager initialization failed: {}. Local inference is unavailable.", e);
                     shared_state.engine_manager = Some(engine_manager_arc);
                     shared_state.engine_available.store(false, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -109,11 +213,13 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
 
     let shared_state = Arc::new(shared_state);
 
+    // Workers (fast construction)
     let _context_worker: Arc<ContextWorker> = Arc::new(ContextWorker::new(shared_state.clone()));
     let _cache_worker: Arc<CacheWorker> = Arc::new(CacheWorker::new(shared_state.clone()));
     let _database_worker: Arc<DatabaseWorker> = Arc::new(DatabaseWorker::new(shared_state.clone()));
     let _llm_worker = shared_state.llm_worker.clone();
 
+    // Cache manager — derive config from model context window, wire in LLM worker
     let cache_manager = match crate::cache_management::create_default_cache_manager(
         crate::cache_management::KVCacheConfig::from_ctx_size(cfg.ctx_size),
         memory_database.clone(),
@@ -128,15 +234,21 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
         *g = cache_manager;
     }
 
+    // Embedding index (fast, reads disk)
     if let Err(e) = shared_state.database_pool.embeddings.initialize_index("llama-server") {
         debug!("Embedding index init: {} (will build on first store)", e);
     } else {
         info!("Embedding HNSW index loaded from existing data");
     }
 
+    // Thread pool
     let thread_pool_config = ThreadPoolConfig::new(&cfg);
     let mut thread_pool = ThreadPool::new(thread_pool_config, shared_state.clone());
     thread_pool.start().await?;
+
+    // ── Phase 2: Bind port immediately ────────────────────────────────────────
+    // Port is bound NOW, before any slow I/O, so the main thread's
+    // 60-second actual_port_rx timeout is satisfied within seconds.
 
     let unified_state = UnifiedAppState::new(shared_state.clone());
     let app = build_compatible_router(unified_state);
@@ -166,13 +278,14 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
                 }
             }
             let listener = found_listener.ok_or_else(|| anyhow!(
-                "Failed to find available port after scanning 8002-8999.\n  Last error: {:?}\n  Hints: disable firewall, close other Aud.io instances, or run as Administrator.",
+                "Failed to find available port after scanning 8002-8999.\n  Last error: {:?}\n  Hints: disable firewall, close other Offline Intelligence instances, or run as Administrator.",
                 last_error
             ))?;
             (listener, found_port)
         }
     };
 
+    // Send port to main thread — satisfies the 60-second actual_port_rx timeout.
     if let Some(ref tx) = port_tx {
         if let Err(e) = tx.send(selected_port) {
             warn!("Failed to send port to main thread: {}", e);
@@ -182,15 +295,25 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
     }
     info!("🌐 Server will accept connections on port {}", selected_port);
 
+    // ── Phase 3: Slow runtime init in background ──────────────────────────────
+    // Starting llama-server and waiting for it to be healthy can take 30-120 s.
+    // We do this in a background task; the HTTP server starts immediately and
+    // returns {"status":"initializing"} until mark_initialization_complete() fires.
     {
         let shared_state_bg = shared_state.clone();
         let cfg_bg = cfg.clone();
         let memory_database_bg = memory_database.clone();
         tokio::spawn(async move {
-            
+            // ── Mark initialization complete IMMEDIATELY ──────────────────────────
+            // The health endpoint now returns "degraded" right away (init done, no
+            // model loaded yet). The frontend LoadingScreen accepts "degraded" and
+            // opens the app; the local model auto-load continues in the background.
+            // This must be the very first statement so the ~100 ms polling window
+            // in LoadingScreen.tsx resolves on the first tick after axum starts.
             shared_state_bg.mark_initialization_complete();
             info!("✅ Backend marked as initialized — frontend may proceed");
 
+            // Context orchestrator — token limits derived from model's ctx_size
             let context_orchestrator = match crate::context_engine::create_default_orchestrator(
                 memory_database_bg,
                 cfg_bg.ctx_size,
@@ -210,6 +333,7 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
                 *g = context_orchestrator;
             }
 
+            // Runtime Manager — this is the slow part (starts llama-server)
             info!("🚀 Initializing Runtime Manager");
             let runtime_manager = Arc::new(crate::model_runtime::RuntimeManager::new());
             let runtime_config = crate::model_runtime::RuntimeConfig {
@@ -234,6 +358,7 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
                 extra_config: serde_json::json!({}),
             };
 
+            // Check whether an engine binary exists (registry OR bundled config binary)
             let llama_bin_exists = !cfg_bg.llama_bin.is_empty()
                 && std::path::Path::new(&cfg_bg.llama_bin).exists();
             let has_engine = if let Some(ref em) = shared_state_bg.engine_manager {
@@ -243,6 +368,8 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
                 llama_bin_exists
             };
 
+            // Always store the RuntimeManager so that switch_model can work
+            // even when no engine is currently installed (user can download later).
             if let Err(e) = shared_state_bg.set_runtime_manager(runtime_manager.clone()) {
                 error!("❌ Failed to set runtime manager: {}", e);
             }
@@ -250,10 +377,9 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
             info!("🔗 LLM worker linked to runtime manager");
 
             if has_engine {
-                
+                // Try to auto-load the last used model
                 let last_model_loaded = 'load: {
-                    let Some(data_dir) = dirs::data_dir() else { break 'load false; };
-                    let last_model_path = data_dir.join("Aud.io").join("last_model.txt");
+                    let last_model_path = crate::utils::PathResolver::last_model_path();
                     let Ok(last_model_id_raw) = std::fs::read_to_string(&last_model_path) else {
                         info!("ℹ️  No last used model found");
                         break 'load false;
@@ -330,21 +456,24 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
                             info!("✅ Runtime initialized at {}", base_url);
                             shared_state_bg.llm_worker.set_runtime_manager(runtime_manager);
                         }
-                        Err(e) => warn!("⚠️  Runtime initialization failed: {}. Online-only mode.", e),
+                        Err(e) => error!("❌ Runtime initialization failed: {}. Local inference is unavailable.", e),
                     }
                 }
             } else {
-                info!("⏳ No engine found - starting in online-only mode");
+                error!("❌ No engine found — local inference is unavailable. Please download an engine from the Models page.");
             }
 
             info!("✅ Background initialization complete");
         });
     }
 
+    // Spawn attachment cache eviction task.
+    // Runs every 5 minutes and removes entries older than 30 minutes so the
+    // DashMap doesn't grow unboundedly when users attach many files without sending.
     {
         let cache = shared_state.attachment_cache.clone();
         tokio::spawn(async move {
-            let interval = std::time::Duration::from_secs(300); 
+            let interval = std::time::Duration::from_secs(300); // 5 minutes
             loop {
                 tokio::time::sleep(interval).await;
                 let before = cache.len();
@@ -359,15 +488,98 @@ pub async fn run_thread_server(cfg: Config, port_tx: Option<std::sync::mpsc::Sen
         });
     }
 
-    info!("🟢 Axum server starting on port {}...", selected_port);
-    if let Err(e) = axum::serve(listener, app).await {
-        error!("Axum server error: {}", e);
+    // ── Serve — blocks until the process exits ────────────────────────────────
+    match tls_acceptor {
+        Some(acceptor) => {
+            // HTTPS path: manual TLS accept loop.
+            //
+            // axum::serve() only handles plain TCP. For TLS we drive hyper
+            // directly: accept TCP → upgrade to TLS → hand the encrypted stream
+            // to hyper's auto-builder (supports HTTP/1.1 + HTTP/2) → serve
+            // through the axum Router.
+            //
+            // The Router is Clone, so each connection gets its own clone, which
+            // is cheap (everything inside is Arc-wrapped).
+            use hyper::body::Incoming;
+            use hyper_util::rt::{TokioExecutor, TokioIo};
+            use hyper_util::server::conn::auto::Builder as AutoBuilder;
+            use tower::Service;
+
+            info!("🔒 HTTPS server accepting connections on port {}...", selected_port);
+
+            loop {
+                let (tcp_stream, remote_addr) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        // Log and continue — a single accept failure must not
+                        // bring down the entire server.
+                        error!("TCP accept error: {}", e);
+                        continue;
+                    }
+                };
+
+                let acceptor = acceptor.clone();
+                let router = app.clone();
+
+                tokio::spawn(async move {
+                    // TLS handshake — upgrades plain TCP to an encrypted stream.
+                    let tls_stream = match acceptor.accept(tcp_stream).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            // Handshake failures are common (port scanners, health
+                            // checks over plain HTTP, expired client certs, etc.).
+                            // Log at debug level to avoid flooding production logs.
+                            debug!("TLS handshake failed from {}: {}", remote_addr, e);
+                            return;
+                        }
+                    };
+
+                    // Wrap the TLS stream in the hyper-util IO adapter and build
+                    // a hyper service that bridges Request<Incoming> → axum Body.
+                    let io = TokioIo::new(tls_stream);
+                    let hyper_svc = hyper::service::service_fn(
+                        move |req: hyper::Request<Incoming>| {
+                            // Router::call() needs &mut self, so clone per request.
+                            // Router is Arc-backed so this clone is cheap.
+                            let mut r = router.clone();
+                            let req = req.map(axum::body::Body::new);
+                            async move { r.call(req).await }
+                        },
+                    );
+
+                    // auto::Builder supports both HTTP/1.1 and HTTP/2 with
+                    // protocol negotiation via ALPN (if the cert includes it).
+                    if let Err(e) = AutoBuilder::new(TokioExecutor::new())
+                        .serve_connection_with_upgrades(io, hyper_svc)
+                        .await
+                    {
+                        // "connection reset by peer" and similar are expected
+                        // in normal operation; only log genuine errors.
+                        let msg = e.to_string();
+                        if !msg.contains("connection closed")
+                            && !msg.contains("reset by peer")
+                            && !msg.contains("broken pipe")
+                        {
+                            error!("HTTPS connection error from {}: {}", remote_addr, e);
+                        }
+                    }
+                });
+            }
+        }
+        None => {
+            // Plain HTTP path — identical to the original behaviour.
+            info!("🌐 HTTP server starting on port {}...", selected_port);
+            if let Err(e) = axum::serve(listener, app).await {
+                error!("HTTP server error: {}", e);
+            }
+        }
     }
-    
-    info!("Axum server stopped");
+
+    info!("Server stopped");
     Ok(())
 }
 
+/// Try to bind to a specific port, returning the listener if successful
 async fn try_bind_port(host: &str, port: u16) -> anyhow::Result<tokio::net::TcpListener> {
     let addr = format!("{}:{}", host, port);
     match tokio::net::TcpListener::bind(&addr).await {
@@ -379,17 +591,20 @@ async fn try_bind_port(host: &str, port: u16) -> anyhow::Result<tokio::net::TcpL
     }
 }
 
+/// Health response structure with detailed runtime status
 #[derive(serde::Serialize)]
 struct HealthResponse {
-    status: String,  
+    status: String,  // "ready", "initializing", "degraded"
     runtime_ready: bool,
     message: Option<String>,
 }
 
+/// Health check handler that verifies backend is fully initialized AND runtime is ready
 async fn health_check(axum::extract::State(state): axum::extract::State<UnifiedAppState>) -> axum::response::Response {
     use axum::Json;
     use axum::response::IntoResponse;
 
+    // Check if backend initialization is complete
     if !state.shared_state.is_initialization_complete() {
         return Json(HealthResponse {
             status: "initializing".to_string(),
@@ -399,6 +614,7 @@ async fn health_check(axum::extract::State(state): axum::extract::State<UnifiedA
         .into_response();
     }
 
+    // Check if runtime is actually ready for inference
     let runtime_ready = state.shared_state.llm_worker.is_runtime_ready().await;
 
     let (status, message) = if runtime_ready {
@@ -418,6 +634,7 @@ async fn health_check(axum::extract::State(state): axum::extract::State<UnifiedA
     .into_response()
 }
 
+/// Build router for 1-hop architecture
 fn build_compatible_router(mut state: UnifiedAppState) -> axum::Router {
     use axum::{
         Router,
@@ -431,16 +648,34 @@ fn build_compatible_router(mut state: UnifiedAppState) -> axum::Router {
     };
     use std::time::Duration;
 
+    // Allow any origin in all builds.
+    //
+    // Rationale: this server only ever binds to 127.0.0.1 (localhost), so it is
+    // unreachable from any remote host.  The WebView origin varies by platform
+    // and Tauri version (tauri://localhost, http://localhost, null, etc.).
+    // Restricting to a hard-coded origin silently breaks all fetch() calls when
+    // the actual origin doesn't match — the root cause of the 135-second loading
+    // screen hang.  Security is provided by Tauri's capability / CSP layer, not
+    // by CORS headers on a local-only server.
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::PUT, axum::http::Method::DELETE])
         .allow_headers(Any);
 
+    // Get JWT secret from environment or generate a default
     let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "aud-io-default-secret-change-in-production".to_string());
+        .unwrap_or_else(|_| "offline-intelligence-default-secret-change-in-production".to_string());
 
+    // Get users store from database
     let users_store = state.shared_state.database_pool.users.clone();
 
+    // Initialize Google OAuth state.
+    //
+    // Resolution order (first non-empty value wins):
+    //  1. Compile-time constant via `option_env!()` — baked into the binary at `cargo build`.
+    //     Set these in your CI/CD pipeline or locally before running `cargo tauri build`.
+    //     End users of the shipped installer never need to set anything.
+    //  2. Runtime environment variable — useful during local development / debugging.
     let google_oauth = {
         let client_id = option_env!("GOOGLE_CLIENT_ID")
             .map(|s| s.to_string())
@@ -473,6 +708,7 @@ fn build_compatible_router(mut state: UnifiedAppState) -> axum::Router {
         }
     };
 
+    // Create and set auth state
     state.auth_state = Some(Arc::new(crate::api::auth_api::AuthState {
         users: users_store,
         jwt_secret,
@@ -480,29 +716,27 @@ fn build_compatible_router(mut state: UnifiedAppState) -> axum::Router {
     }));
 
     Router::new()
-        
+        // Auth routes — email/password (legacy) + Google OAuth
         .route("/auth/signup", post(crate::api::auth_api::signup))
         .route("/auth/login", post(crate::api::auth_api::login))
         .route("/auth/verify-email", post(crate::api::auth_api::verify_email))
         .route("/auth/me", post(crate::api::auth_api::get_current_user))
-        
+        // Google OAuth endpoints
         .route("/auth/google/init", post(crate::api::auth_api::google_init))
         .route("/auth/google/callback", get(crate::api::auth_api::google_callback))
         .route("/auth/google/status", get(crate::api::auth_api::google_status))
-        
+        // Core 1-hop streaming endpoint
         .route("/generate/stream", post(crate::api::stream_api::generate_stream))
-        
-        .route("/online/stream", post(crate::api::online_api::online_stream))
-        
+        // Title generation via shared memory -> LLM worker
         .route("/generate/title", post(crate::api::title_api::generate_title))
-        
+        // Conversation CRUD via shared memory -> database
         .route("/conversations", get(crate::api::conversation_api::get_conversations))
         .route("/conversations/db-stats", get(crate::api::conversation_api::get_conversations_db_stats))
         .route("/conversations/:id", get(crate::api::conversation_api::get_conversation))
         .route("/conversations/:id/title", put(crate::api::conversation_api::update_conversation_title))
         .route("/conversations/:id/pinned", post(crate::api::conversation_api::update_conversation_pinned))
         .route("/conversations/:id", delete(crate::api::conversation_api::delete_conversation))
-        
+        // Model management endpoints
         .route("/models", get(crate::api::model_api::list_models))
         .route("/models/by-mode", get(crate::api::model_api::list_models_by_mode))
         .route("/models/active", get(crate::api::model_api::get_active_model))
@@ -518,26 +752,22 @@ fn build_compatible_router(mut state: UnifiedAppState) -> axum::Router {
         .route("/models/preferences", post(crate::api::model_api::update_preferences))
         .route("/models/refresh", post(crate::api::model_api::refresh_models))
         .route("/models/switch", post(crate::api::model_api::switch_model))
-        
+        // Phase A: HF gated model access check
         .route("/models/hf/access", get(crate::api::model_api::check_hf_access))
-        
-        .route("/models/openrouter/catalog", get(crate::api::model_api::openrouter_catalog))
-        .route("/models/openrouter/quota", get(crate::api::model_api::openrouter_quota))
         .route("/hardware/recommendations", get(crate::api::model_api::get_hardware_recommendations))
         .route("/hardware/info", get(crate::api::model_api::get_hardware_info))
         .route("/metrics/system", get(crate::api::model_api::get_system_metrics))
         .route("/storage/metadata", get(crate::api::model_api::get_storage_metadata))
-        
+        // API Keys management endpoints
         .route("/api-keys", post(crate::api::api_keys_api::save_api_key))
         .route("/api-keys", get(crate::api::api_keys_api::get_api_key))
         .route("/api-keys/all", get(crate::api::api_keys_api::get_all_api_keys))
         .route("/api-keys", delete(crate::api::api_keys_api::delete_api_key))
         .route("/api-keys/mark-used", post(crate::api::api_keys_api::mark_key_used))
         .route("/api-keys/verify", post(crate::api::api_keys_api::verify_api_key))
-        
-        .route("/mode/switch", post(crate::api::mode_api::switch_mode))
+        // Engine/mode status endpoint
         .route("/mode/status", get(crate::api::mode_api::get_mode_status))
-        
+        // Files API endpoints (database-backed with nested folder support)
         .route("/files", get(crate::api::files_api::get_files))
         .route("/files/all", get(crate::api::files_api::get_all_files))
         .route("/files/search", get(crate::api::files_api::search_files))
@@ -549,7 +779,7 @@ fn build_compatible_router(mut state: UnifiedAppState) -> axum::Router {
         .route("/files/:id/content", get(crate::api::files_api::get_file_content))
         .route("/files/:id", delete(crate::api::files_api::delete_file_by_id))
         .route("/files", delete(crate::api::files_api::delete_file))
-        
+        // All Files API endpoints (unlimited storage for all file formats)
         .route("/all-files", get(crate::api::all_files_api::get_all_files))
         .route("/all-files/all", get(crate::api::all_files_api::get_all_files_flat))
         .route("/all-files/search", get(crate::api::all_files_api::search_all_files))
@@ -560,13 +790,13 @@ fn build_compatible_router(mut state: UnifiedAppState) -> axum::Router {
         .route("/all-files/:id/content", get(crate::api::all_files_api::get_all_file_content))
         .route("/all-files/:id", delete(crate::api::all_files_api::delete_all_file_by_id))
         .route("/all-files", delete(crate::api::all_files_api::delete_all_file))
-        
+        // Feedback endpoint
         .route("/feedback", post(crate::api::feedback_api::submit_feedback))
-        
+        // Login notification endpoint
         .route("/notify-login", post(crate::api::login_notification_api::notify_user_login))
-        
+        // Attachment pre-extraction endpoint
         .route("/attachments/preprocess", post(crate::api::attachment_api::preprocess_attachments))
-        
+        // Metrics endpoint
         .route("/metrics", get(crate::metrics::get_metrics))
         .route("/healthz", get(health_check))
         .route("/admin/shutdown", post(crate::admin::stop_backend))

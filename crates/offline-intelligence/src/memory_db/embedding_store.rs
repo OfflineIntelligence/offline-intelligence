@@ -1,3 +1,5 @@
+// "D:\_ProjectWorks\AUDIO_Interface\Server\src\memory_db\embedding_store.rs"
+//! Embedding storage and retrieval operations with ANN indexing support
 
 use crate::memory_db::schema::*;
 use rusqlite::{params, Result, Row};
@@ -12,6 +14,7 @@ use hora::core::metrics::Metric;
 use hora::index::hnsw_idx::HNSWIndex;
 use hora::index::hnsw_params::HNSWParams; 
 
+/// Manages embedding storage and retrieval with HNSW-based ANN indexing
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EmbeddingStats {
     pub total_embeddings: usize,
@@ -21,11 +24,12 @@ pub struct EmbeddingStats {
 
 pub struct EmbeddingStore {
     pool: Arc<Pool<SqliteConnectionManager>>,
-    
+    // ANN index for fast similarity search
     ann_index: RwLock<Option<HNSWIndex<f32, i64>>>,
-    
+    // In-memory cache for linear search fallbacks
     embedding_cache: RwLock<HashMap<i64, Vec<f32>>>,
-    
+    // Set to true when embeddings are added but the index hasn't been rebuilt yet.
+    // The rebuild is deferred until the next search (lazy strategy).
     index_dirty: AtomicBool,
 }
 
@@ -52,18 +56,20 @@ impl EmbeddingStore {
         
         let mut rows = stmt.query([model])?;
         
+        // Fix: Use correct field names for HNSWParams based on error message
         let params = HNSWParams {
-            
+            // According to error: n_neighbor is likely the equivalent of 'm' in other implementations
             n_neighbor: 16,
-            
+            // According to error: ef_build is likely the equivalent of 'ef_construction'
             ef_build: 100,
-            
+            // According to error: ef_search should be available
             ef_search: 50,
             ..Default::default()
         };
         
+        // Initialize HNSW index with dimension and a reference to params
         let mut index = HNSWIndex::<f32, i64>::new(
-            384, 
+            384, // dimension
             &params,
         );
         
@@ -75,10 +81,12 @@ impl EmbeddingStore {
             let embedding: Vec<f32> = bincode::deserialize(&embedding_bytes)
                 .map_err(|e| anyhow::anyhow!("Deserialization error: {}", e))?;
             
+            // Ignore duplicate insert errors while rebuilding the ANN index
             let _ = index.add(&embedding, message_id);
             cache.insert(message_id, embedding);
         }
         
+        // Build the index with the Metric
         index.build(Metric::CosineSimilarity)
             .map_err(|e| anyhow::anyhow!("Failed to build index: {}", e))?;
         
@@ -100,7 +108,8 @@ impl EmbeddingStore {
         cache.insert(embedding.message_id, embedding.embedding.clone());
 
         if let Some(ref mut index) = *self.ann_index.write().unwrap() {
-            
+            // Add to the graph structure; the build (which is the expensive O(n log n) step)
+            // is deferred until the next search via the dirty flag.
             let _ = index.add(&embedding.embedding, embedding.message_id);
             self.index_dirty.store(true, Ordering::Release);
         }
@@ -118,6 +127,9 @@ impl EmbeddingStore {
             return Err(anyhow::anyhow!("Invalid model name"));
         }
 
+        // Lazy rebuild: if new embeddings have been added since the last build,
+        // rebuild now before searching. Uses a double-check under the write lock
+        // to avoid redundant rebuilds when multiple threads enter concurrently.
         if self.index_dirty.load(Ordering::Acquire) {
             let mut index_guard = self.ann_index.write().unwrap();
             if self.index_dirty.load(Ordering::Acquire) {
@@ -128,7 +140,7 @@ impl EmbeddingStore {
                 }
                 self.index_dirty.store(false, Ordering::Release);
             }
-            
+            // write lock drops here before the read-lock search below
         }
 
         {

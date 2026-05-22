@@ -1,12 +1,21 @@
+//! Model Recommendation System
+//!
+//! Provides hardware-aware model recommendations based on:
+//! - Available RAM and VRAM
+//! - CPU/GPU capabilities
+//! - Model size requirements
+//! - User preferences and use cases
 
 use super::registry::ModelInfo;
 use crate::config::Config;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
+// System info only needed on macOS for unified memory detection
 #[cfg(target_os = "macos")]
 use sysinfo::System;
 
+/// User preferences for model recommendations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserPreferences {
     pub primary_use_case: UseCase,
@@ -16,6 +25,7 @@ pub struct UserPreferences {
     pub preferred_formats: Vec<String>,
 }
 
+/// Primary use case for the model
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum UseCase {
     ChatAssistant,
@@ -26,25 +36,28 @@ pub enum UseCase {
     GeneralPurpose,
 }
 
+/// Quality preference setting
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum QualityPreference {
-    HighQuality,  
-    Balanced,     
-    FastResponse, 
+    HighQuality,  // Prefer larger, more capable models
+    Balanced,     // Balance quality and performance
+    FastResponse, // Prioritize speed over quality
 }
 
+/// Speed preference setting
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SpeedPreference {
-    Fastest,        
-    Balanced,       
-    HighestQuality, 
+    Fastest,        // Prioritize inference speed
+    Balanced,       // Balance speed and quality
+    HighestQuality, // Prioritize quality over speed
 }
 
+/// Cost sensitivity (relevant for cloud/API models)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CostSensitivity {
-    Budget,   
-    Moderate, 
-    Premium,  
+    Budget,   // Prefer smaller, free models
+    Moderate, // Balanced approach
+    Premium,  // Willing to use larger/expensive models
 }
 
 impl Default for UserPreferences {
@@ -54,11 +67,12 @@ impl Default for UserPreferences {
             quality_preference: QualityPreference::Balanced,
             speed_preference: SpeedPreference::Balanced,
             cost_sensitivity: CostSensitivity::Moderate,
-            preferred_formats: vec!["gguf".to_string()], 
+            preferred_formats: vec!["gguf".to_string()], // Default to GGUF for local inference
         }
     }
 }
 
+/// Hardware profile detected from system
 #[derive(Debug, Clone)]
 pub struct HardwareProfile {
     pub total_ram_gb: f32,
@@ -71,6 +85,7 @@ pub struct HardwareProfile {
     pub system_architecture: String,
 }
 
+/// Model recommender service
 pub struct ModelRecommender {
     user_preferences: UserPreferences,
 }
@@ -82,15 +97,18 @@ impl ModelRecommender {
         }
     }
 
+    /// Update user preferences
     pub fn set_preferences(&mut self, preferences: UserPreferences) {
         self.user_preferences = preferences;
         info!("Updated user preferences: {:?}", self.user_preferences);
     }
 
+    /// Get current user preferences
     pub fn get_preferences(&self) -> &UserPreferences {
         &self.user_preferences
     }
 
+    /// Detect hardware profile from system configuration
     pub fn detect_hardware_profile(config: &Config) -> HardwareProfile {
         let mut system = sysinfo::System::new_all();
         system.refresh_memory();
@@ -101,6 +119,7 @@ impl ModelRecommender {
         let cpu_cores = num_cpus::get() as u32;
         let cpu_threads = config.threads;
 
+        // GPU detection
         let (gpu_available, gpu_vram_gb, gpu_compute_capability) = Self::detect_gpu();
 
         HardwareProfile {
@@ -115,8 +134,9 @@ impl ModelRecommender {
         }
     }
 
+    /// Detect GPU capabilities (platform-specific)
     fn detect_gpu() -> (bool, Option<f32>, Option<f32>) {
-        
+        // Windows and Linux: Use NVML for NVIDIA GPU detection (only when nvidia feature enabled)
         #[cfg(all(feature = "nvidia", any(target_os = "windows", target_os = "linux")))]
         {
             match nvml_wrapper::Nvml::init() {
@@ -133,7 +153,8 @@ impl ModelRecommender {
                                         None
                                     };
 
-                                    let compute_capability = Some(7.5); 
+                                    // Simplified compute capability detection
+                                    let compute_capability = Some(7.5); // Default assumption
 
                                     (true, vram_gb, compute_capability)
                                 }
@@ -147,20 +168,22 @@ impl ModelRecommender {
             }
         }
 
+        // Windows and Linux without NVML: fallback - no GPU metrics available at this level
         #[cfg(all(not(feature = "nvidia"), any(target_os = "windows", target_os = "linux")))]
         {
-            
+            // GPU layer count is already detected in config.rs via nvidia-smi
             (false, None, None)
         }
 
+        // macOS Apple Silicon: Metal GPU with unified memory
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         {
             use sysinfo::System;
             let mut sys = System::new_all();
             sys.refresh_memory();
-            
+            // Apple Silicon uses unified memory - report total as "VRAM" since it's shared
             let unified_mem_gb = sys.total_memory() as f32 / (1024.0 * 1024.0 * 1024.0);
-            
+            // Metal compute capability is not directly comparable to CUDA, use a placeholder
             info!(
                 "Apple Silicon detected with Metal GPU, unified memory: {:.1} GB",
                 unified_mem_gb
@@ -168,6 +191,7 @@ impl ModelRecommender {
             (true, Some(unified_mem_gb), None)
         }
 
+        // macOS Intel: No efficient GPU for LLM inference
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         {
             info!("Intel Mac detected, no GPU acceleration available");
@@ -175,52 +199,59 @@ impl ModelRecommender {
         }
     }
 
+    /// Score a model's compatibility with current hardware
     pub fn score_model_compatibility(&self, model: &ModelInfo, hardware: &HardwareProfile) -> f32 {
         let mut score = 1.0f32;
 
-        let model_ram_gb = (model.size_bytes as f32) / (1024.0 * 1024.0 * 1024.0) * 1.5; 
+        // RAM requirements check
+        let model_ram_gb = (model.size_bytes as f32) / (1024.0 * 1024.0 * 1024.0) * 1.5; // Estimate with buffer
 
         if model_ram_gb > hardware.available_ram_gb {
-            score *= 0.3; 
+            score *= 0.3; // Heavy penalty for insufficient RAM
         } else if model_ram_gb > hardware.total_ram_gb * 0.8 {
-            score *= 0.7; 
+            score *= 0.7; // Moderate penalty for tight RAM
         }
 
+        // GPU requirements check
         let requires_gpu = model.tags.contains(&"gpu".to_string())
             || model.format.eq_ignore_ascii_case("tensorrt");
 
         if requires_gpu && !hardware.gpu_available {
-            score *= 0.2; 
+            score *= 0.2; // Heavy penalty for GPU requirement without GPU
         } else if requires_gpu && hardware.gpu_available {
             if let Some(vram_gb) = hardware.gpu_vram_gb {
                 let required_vram = match model.size_bytes {
-                    s if s < 5 * 1024 * 1024 * 1024 => 6.0, 
+                    s if s < 5 * 1024 * 1024 * 1024 => 6.0, // 5GB model needs ~6GB VRAM
                     s if s < 10 * 1024 * 1024 * 1024 => 12.0,
                     _ => 24.0,
                 };
 
                 if vram_gb < required_vram * 0.8 {
-                    score *= 0.5; 
+                    score *= 0.5; // Penalty for tight VRAM
                 }
             }
         }
 
+        // Format preference bonus
         if self
             .user_preferences
             .preferred_formats
             .iter()
             .any(|f| model.format.eq_ignore_ascii_case(f))
         {
-            score *= 1.2; 
+            score *= 1.2; // Bonus for preferred format
         }
 
+        // Use case alignment
         score *= self.score_use_case_alignment(model);
 
+        // Quality/speed preference adjustment
         score *= self.score_quality_speed_preference(model);
 
         score.clamp(0.0, 1.0)
     }
 
+    /// Score how well a model aligns with the user's use case
     fn score_use_case_alignment(&self, model: &ModelInfo) -> f32 {
         let use_case_tags: Vec<&str> = model.tags.iter().map(|s| s.as_str()).collect();
 
@@ -269,13 +300,14 @@ impl ModelRecommender {
         }
     }
 
+    /// Adjust score based on quality/speed preferences
     fn score_quality_speed_preference(&self, model: &ModelInfo) -> f32 {
         let model_size_category = if model.size_bytes < 3 * 1024 * 1024 * 1024 {
-            "small" 
+            "small" // < 3GB
         } else if model.size_bytes < 10 * 1024 * 1024 * 1024 {
-            "medium" 
+            "medium" // 3-10GB
         } else {
-            "large" 
+            "large" // > 10GB
         };
 
         match (
@@ -298,10 +330,11 @@ impl ModelRecommender {
                     _ => 1.0,
                 }
             }
-            _ => 1.0, 
+            _ => 1.0, // Balanced preferences
         }
     }
 
+    /// Get top recommended models for current hardware and preferences
     pub fn get_recommendations(
         &self,
         models: Vec<&ModelInfo>,
@@ -316,14 +349,17 @@ impl ModelRecommender {
             })
             .collect();
 
+        // Sort by compatibility score (descending)
         scored_models.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
+        // Take top results
         scored_models.truncate(max_results);
 
         debug!("Generated {} model recommendations", scored_models.len());
         scored_models
     }
 
+    /// Get hardware recommendations message
     pub fn get_hardware_recommendation_message(&self, hardware: &HardwareProfile) -> String {
         let mut recommendations = Vec::new();
 
@@ -391,7 +427,14 @@ mod tests {
             queue_size: 1000,
             queue_timeout_seconds: 300,
             backend_url: "http://127.0.0.1:8001".to_string(),
-            openrouter_api_key: "".to_string(),
+            draft_model_path: String::new(),
+            speculative_draft_max: 8,
+            speculative_draft_p_min: 0.4,
+            parallel_slots: 8,
+            ubatch_size: 1024,
+            tls_enabled: false,
+            tls_cert_path: String::new(),
+            tls_key_path: String::new(),
         };
 
         let hardware = ModelRecommender::detect_hardware_profile(&config);

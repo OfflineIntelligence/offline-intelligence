@@ -1,3 +1,11 @@
+//! Model Management System
+//!
+//! Provides comprehensive model lifecycle management including:
+//! - Model registry and metadata storage
+//! - Download from HuggingFace Hub
+//! - Local storage management in AppData
+//! - Hardware-aware model recommendations
+//! - Progress tracking for downloads
 
 pub mod registry;
 pub mod downloader;
@@ -19,6 +27,7 @@ use tokio::sync::RwLock;
 
 use crate::config::Config;
 
+/// Main model management service
 pub struct ModelManager {
     pub registry: Arc<RwLock<ModelRegistry>>,
     pub downloader: Arc<ModelDownloader>,
@@ -41,54 +50,43 @@ impl ModelManager {
         })
     }
 
+    /// Initialize the model manager and scan for existing models
     pub async fn initialize(&self, cfg: &Config) -> Result<()> {
-        
+        // Scan storage for existing models and populate registry
         self.registry.write().await.scan_storage().await?;
 
+        // Refresh model catalogs from remote sources on startup
         self.refresh_catalogs(cfg).await?;
 
+        // After scanning storage, compute compatibility scores for local models
+        // based on the current hardware profile so that the UI can sort by
+        // "Best Match" using the compatibility_score field.
         let hardware = ModelRecommender::detect_hardware_profile(cfg);
         {
             let mut registry = self.registry.write().await;
             let recommender = &*self.recommender;
             registry.update_compatibility_scores(recommender, &hardware);
-            
+            // Persist updated registry so compatibility scores survive restarts
             let _ = registry.save_registry().await;
         }
 
         Ok(())
     }
 
-    pub async fn refresh_catalogs(&self, cfg: &Config) -> Result<()> {
-        let env_key = std::env::var("OPENROUTER_API_KEY").ok();
-        let api_key = if !cfg.openrouter_api_key.is_empty() && !cfg.openrouter_api_key.trim().is_empty() {
-            Some(cfg.openrouter_api_key.as_str())
-        } else if let Some(ref env_value) = env_key {
-            Some(env_value.as_str())
-        } else {
-            None
-        };
-
+    /// Refresh model catalogs from remote sources (HuggingFace)
+    pub async fn refresh_catalogs(&self, _cfg: &Config) -> Result<()> {
         let mut registry = self.registry.write().await;
-        if let Some(key) = api_key {
-            if let Err(e) = registry.refresh_openrouter_catalog_from_api(key).await {
-                tracing::warn!("Failed to refresh OpenRouter catalog: {}", e);
-                
-            }
-        } else {
-            
-            registry.populate_default_openrouter_models().await;
-        }
-        
-        if let Err(e) = registry.save_registry().await {
-            tracing::error!("Failed to save model registry after OpenRouter refresh: {}", e);
-        }
 
+        // Refresh Hugging Face GGUF/GGML catalog (network-optional — fails gracefully on air-gapped systems)
         if let Err(e) = registry.refresh_huggingface_catalog_from_api(500).await {
-            tracing::warn!("Failed to refresh Hugging Face catalog: {}", e);
+            tracing::warn!(
+                "⚠️  HuggingFace catalog refresh failed (network unavailable or rate-limited): {}. \
+                 Cached catalog will be used. Local models already installed continue to work.",
+                e
+            );
         }
         if let Err(e) = registry.save_registry().await {
-            tracing::error!("Failed to save model registry after HuggingFace refresh: {}", e);
+            tracing::error!("❌ Failed to save model registry after HuggingFace refresh: {}", e);
         }
 
         Ok(())

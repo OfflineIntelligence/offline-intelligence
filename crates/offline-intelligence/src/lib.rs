@@ -1,3 +1,4 @@
+// offline-intelligence/crates/offline-intelligence/src/lib.rs
 
 pub mod admin;
 pub mod api;
@@ -26,25 +27,3 @@ pub use metrics::*;
 pub use cache_management::*;
 pub use thread_server::*;
 
-use std::sync::Arc;
-use tracing::{info, warn};
-
-use memory_db::MemoryDatabase;
-
-async fn init_cache_manager(
-    memory_database: Arc<MemoryDatabase>,
-    ctx_size: u32,
-) -> anyhow::Result<Option<Arc<cache_management::KVCacheManager>>> {
-    let cache_config = cache_management::KVCacheConfig::from_ctx_size(ctx_size);
-    
-    match KVCacheManager::new(cache_config, memory_database, None) {
-        Ok(manager) => {
-            info!("Cache manager initialized successfully");
-            Ok(Some(Arc::new(manager)))
-        }
-        Err(e) => {
-            warn!("Failed to initialize cache manager: {}, cache features disabled", e);
-            Ok(None)
-        }
-    }
-}

@@ -1,3 +1,12 @@
+//! Model Management API Endpoints
+//!
+//! Provides RESTful API endpoints for:
+//! - Listing available and installed models
+//! - Searching for models
+//! - Downloading/installing models
+//! - Removing/uninstalling models
+//! - Getting download progress
+//! - Hardware recommendations
 
 use axum::{
     extract::{Query, State},
@@ -7,7 +16,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
-use std::env;
 
 use crate::{
     model_management::{
@@ -16,11 +24,10 @@ use crate::{
         recommendation::{ModelRecommender, UseCase, QualityPreference, SpeedPreference, CostSensitivity},
         ModelManager,
     },
-    model_runtime::RuntimeManager,
     shared_state::UnifiedAppState,
-    memory_db::ApiKeyType,
 };
 
+/// Request to install/download a model
 #[derive(Debug, Deserialize)]
 pub struct InstallModelRequest {
     pub model_id: String,
@@ -29,23 +36,25 @@ pub struct InstallModelRequest {
     pub description: Option<String>,
     pub size_bytes: u64,
     pub format: String,
-    
+    /// Optional HuggingFace token for gated/private models
     pub hf_token: Option<String>,
 }
 
+/// Specify where to download a model from
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum ModelSourceSpecifier {
     HuggingFace { repo_id: String, filename: String },
-    OpenRouter { model_id: String },
 }
 
+/// Response for model installation
 #[derive(Debug, Serialize)]
 pub struct InstallModelResponse {
     pub download_id: String,
     pub message: String,
 }
 
+/// Response for the currently active/loaded model
 #[derive(Debug, Serialize)]
 pub struct ActiveModelResponse {
     pub model_path: String,
@@ -57,34 +66,35 @@ pub struct ActiveModelResponse {
     pub status: String,
 }
 
+/// Request to search for models
 #[derive(Debug, Deserialize)]
 pub struct SearchModelsRequest {
     pub query: String,
     pub limit: Option<usize>,
 }
 
+/// Response containing search results
 #[derive(Debug, Serialize)]
 pub struct SearchModelsResponse {
     pub models: Vec<ModelInfo>,
     pub total_found: usize,
 }
 
+/// Request to refresh the dynamic model catalog
 #[derive(Debug, Deserialize)]
 pub struct RefreshModelsRequest {
-    
-    pub source: Option<String>,
-    
-    pub openrouter_api_key: Option<String>,
-    
+    /// Optional HuggingFace token for gated/private models
     pub hf_token: Option<String>,
 }
 
+/// Response after refreshing the model catalog
 #[derive(Debug, Serialize)]
 pub struct RefreshModelsResponse {
     pub updated_sources: Vec<String>,
     pub total_models: usize,
 }
 
+/// Request to update user preferences
 #[derive(Debug, Deserialize)]
 pub struct UpdatePreferencesRequest {
     pub primary_use_case: Option<String>,
@@ -93,17 +103,20 @@ pub struct UpdatePreferencesRequest {
     pub cost_sensitivity: Option<String>,
 }
 
+/// Response with hardware recommendations
 #[derive(Debug, Serialize)]
 pub struct HardwareRecommendationsResponse {
     pub recommendations: Vec<String>,
     pub message: String,
 }
 
+/// Request to switch to a different model
 #[derive(Debug, Deserialize)]
 pub struct SwitchModelRequest {
     pub model_id: String,
 }
 
+/// Response after switching model
 #[derive(Debug, Serialize)]
 pub struct SwitchModelResponse {
     pub message: String,
@@ -111,185 +124,85 @@ pub struct SwitchModelResponse {
     pub model_path: String,
 }
 
+/// Helper function to clone models from registry
 async fn get_cloned_models(model_manager: &ModelManager) -> Vec<ModelInfo> {
     let registry = model_manager.registry.read().await;
     registry.list_models().iter().map(|m| (*m).clone()).collect()
 }
 
-async fn has_verified_key(state: &UnifiedAppState, key_type: ApiKeyType) -> bool {
-    match state.shared_state.database_pool.api_keys.get_key_plaintext(&key_type) {
-        Ok(Some(_)) => true,
-        _ => false,
-    }
-}
 
+/// Get list of all models (installed and available)
 pub async fn list_models(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let model_manager = state.shared_state.model_manager.as_ref()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Return ALL models regardless of API key presence
+    // Users should see available models before adding API keys
     let models = get_cloned_models(model_manager).await;
 
     Ok(Json(models))
 }
 
+/// Get models filtered by source (currently only "huggingface" / "offline")
 pub async fn list_models_by_mode(
     State(state): State<UnifiedAppState>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    Query(_params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let model_manager = state.shared_state.model_manager.as_ref()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let mode = params.get("mode")
-        .map(|s| s.as_str())
-        .unwrap_or("offline");
-
     let all_models = get_cloned_models(model_manager).await;
 
-    let has_openrouter_key = has_verified_key(&state, ApiKeyType::OpenRouter).await;
-    let has_huggingface_key = has_verified_key(&state, ApiKeyType::HuggingFace).await;
+    let big_tech_authors = vec![
+        "google", "meta", "microsoft", "openai", "anthropic",
+        "deepseek-ai", "bigscience", "EleutherAI", "tiiuae",
+        "mistralai", "01-ai", "Qwen", "THUDM", "baai",
+    ];
 
-    match mode {
-        "online" => {
-            
-            let premium_providers = vec![
-                "openai",       
-                "google",       
-                "anthropic",    
-                "deepseek",     
-                "moonshot",    
-                "qwen",        
-                "zhipuai",     
-                "minimax",     
-                "microsoft",   
-                "meta-llama",  
-                "mistral",     
-                "cohere",      
-                "sarvam",     
-                "x-ai",       
-                "nvidia",     
-                "amazon",     
-                "replicate",  
-            ];
+    let mut hf_models: Vec<ModelInfo> = all_models
+        .into_iter()
+        .filter(|m| {
+            m.download_source.as_deref() == Some("huggingface") &&
+            !matches!(m.status, ModelStatus::Error(_))
+        })
+        .collect();
 
-            const MIN_PREMIUM_CTX: u64 = 32000;  
-            const MIN_STANDARD_CTX: u64 = 16000; 
+    hf_models.sort_by(|a, b| {
+        let a_lower = a.author.as_deref().unwrap_or("").to_lowercase();
+        let b_lower = b.author.as_deref().unwrap_or("").to_lowercase();
+        let a_is_big = big_tech_authors.iter().any(|p| a_lower.contains(p));
+        let b_is_big = big_tech_authors.iter().any(|p| b_lower.contains(p));
 
-            let or_models: Vec<ModelInfo> = all_models
-                .into_iter()
-                .filter(|m| {
-                    if m.download_source.as_deref() != Some("openrouter") {
-                        return false;
-                    }
-                    let id_lower = m.id.to_lowercase();
-                    
-                    let is_premium = premium_providers.iter().any(|p| id_lower.contains(p));
-                    
-                    let ctx_len = m.context_length.unwrap_or(0);
-                    let has_good_ctx = ctx_len >= MIN_STANDARD_CTX;
-                    
-                    is_premium || has_good_ctx
-                })
-                .collect();
-
-            let mut sorted_models: Vec<ModelInfo> = or_models;
-            sorted_models.sort_by(|a, b| {
-                let a_lower = a.id.to_lowercase();
-                let b_lower = b.id.to_lowercase();
-                
-                let a_is_premium = premium_providers.iter().any(|p| a_lower.contains(p));
-                let b_is_premium = premium_providers.iter().any(|p| b_lower.contains(p));
-                
-                let a_ctx = a.context_length.unwrap_or(0);
-                let b_ctx = b.context_length.unwrap_or(0);
-                
-                match (a_is_premium, b_is_premium) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => {
-                        
-                        b_ctx.cmp(&a_ctx)
-                    }
-                }
-            });
-
-            let mut seen = std::collections::HashSet::new();
-            sorted_models.retain(|m| {
-                
-                let base_name = m.id
-                    .replace("openrouter:", "")
-                    .split(':')
-                    .next()
-                    .unwrap_or(&m.id)
-                    .to_string();
-                seen.insert(base_name).then(|| {
-                    
-                    true
-                }).unwrap_or(false)
-            });
-
-            sorted_models.truncate(50);
-
-            Ok(Json(sorted_models))
+        match (a_is_big, b_is_big) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => b.downloads.cmp(&a.downloads),
         }
-        "offline" => {
-            
-            let big_tech_authors = vec![
-                "google",
-                "meta",
-                "microsoft",
-                "openai",
-                "anthropic",
-                "deepseek-ai",
-                "bigscience",
-                "EleutherAI",
-                "tiiuae",
-                "mistralai",
-                "01-ai",
-                "Qwen",
-                "THUDM",
-                "baai",
-            ];
+    });
 
-            let mut hf_models: Vec<ModelInfo> = all_models
-                .into_iter()
-                .filter(|m| {
-                    m.download_source.as_deref() == Some("huggingface") &&
-                    !matches!(m.status, ModelStatus::Error(_))
-                })
-                .collect();
+    hf_models.truncate(100);
 
-            hf_models.sort_by(|a, b| {
-                let a_lower = a.author.as_deref().unwrap_or("").to_lowercase();
-                let b_lower = b.author.as_deref().unwrap_or("").to_lowercase();
-                let a_is_big = big_tech_authors.iter().any(|p| a_lower.contains(p));
-                let b_is_big = big_tech_authors.iter().any(|p| b_lower.contains(p));
-                
-                match (a_is_big, b_is_big) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => b.downloads.cmp(&a.downloads), 
-                }
-            });
-
-            hf_models.truncate(100);
-
-            Ok(Json(hf_models))
-        }
-        _ => Err(StatusCode::BAD_REQUEST),
-    }
+    Ok(Json(hf_models))
 }
 
+/// Get the currently active/loaded model info from the running server config
 pub async fn get_active_model(
     State(state): State<UnifiedAppState>,
 ) -> Json<ActiveModelResponse> {
     let config = &state.shared_state.config;
 
+    // Prefer the runtime's live config (populated when a model is auto-loaded or
+    // activated via the UI) over the static startup config, which may be empty.
+    //
+    // The lock guard (RwLockReadGuard) is NOT Send, so it must be fully dropped
+    // before any .await call.  We clone the Arc inside a synchronous block, then
+    // call the async method outside that block.
     let runtime_arc = state.shared_state.runtime_manager
         .read()
         .ok()
-        .and_then(|g| g.clone()); 
+        .and_then(|g| g.clone()); // guard dropped at end of this expression
 
     let runtime_model_path: Option<String> = if let Some(rm) = runtime_arc {
         rm.get_current_config().await
@@ -329,6 +242,7 @@ pub async fn get_active_model(
     })
 }
 
+/// Search for models by name, description, or tags
 pub async fn search_models(
     State(state): State<UnifiedAppState>,
     Query(params): Query<SearchModelsRequest>,
@@ -351,6 +265,7 @@ pub async fn search_models(
     let total_found = filtered_models.len();
     let limit = params.limit.unwrap_or(20).min(total_found);
     
+    // Truncate to limit if needed
     filtered_models.truncate(limit);
 
     Ok(Json(SearchModelsResponse {
@@ -359,9 +274,10 @@ pub async fn search_models(
     }))
 }
 
+/// Refresh the dynamic model catalog from HuggingFace.
 pub async fn refresh_models(
     State(state): State<UnifiedAppState>,
-    Json(payload): Json<RefreshModelsRequest>,
+    Json(_payload): Json<RefreshModelsRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let model_manager = state
         .shared_state
@@ -369,47 +285,12 @@ pub async fn refresh_models(
         .as_ref()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let source = payload.source.as_deref().unwrap_or("all");
     let mut updated_sources = Vec::new();
 
-    if source == "openrouter" || source == "all" {
-        
-        let api_key = if let Some(key) = &payload.openrouter_api_key {
-            if !key.is_empty() { Some(key.clone()) } else { state.get_openrouter_api_key().await }
-        } else {
-            state.get_openrouter_api_key().await
-        };
-
-        if let Some(key) = api_key {
-            info!("Refreshing OpenRouter catalog with stored API key");
-            let mut registry = model_manager.registry.write().await;
-            if let Err(e) = registry.refresh_openrouter_catalog_from_api(&key).await {
-                error!("Failed to refresh OpenRouter catalog: {}", e);
-            } else {
-                updated_sources.push("openrouter".to_string());
-            }
-            if let Err(e) = registry.save_registry().await {
-                error!("Failed to save model registry after OpenRouter refresh: {}", e);
-            }
-        } else {
-            info!("No OpenRouter API key available - loading default OpenRouter catalog");
-            
-            let mut registry = model_manager.registry.write().await;
-            registry.populate_default_openrouter_models().await;
-            if let Err(e) = registry.save_registry().await {
-                error!("Failed to save model registry after populating default OpenRouter models: {}", e);
-            } else {
-                updated_sources.push("openrouter".to_string());
-            }
-        }
-    }
-
-    if source == "huggingface" || source == "all" {
+    {
         let mut registry = model_manager.registry.write().await;
-        
         if let Err(e) = registry.refresh_huggingface_catalog_from_api(100).await {
             error!("Failed to refresh HuggingFace catalog: {}", e);
-            
         } else {
             updated_sources.push("huggingface".to_string());
         }
@@ -418,6 +299,7 @@ pub async fn refresh_models(
         }
     }
 
+    // Recompute compatibility scores for newly fetched offline models
     if !updated_sources.is_empty() {
         let cfg = &state.shared_state.config;
         let hardware = crate::model_management::ModelRecommender::detect_hardware_profile(cfg);
@@ -439,6 +321,7 @@ pub async fn refresh_models(
     }))
 }
 
+/// Install/download a model
 pub async fn install_model(
     State(state): State<UnifiedAppState>,
     Json(payload): Json<InstallModelRequest>,
@@ -448,6 +331,7 @@ pub async fn install_model(
 
     info!("Installing model: {} ({})", payload.model_name, payload.model_id);
 
+    // Create model info
     let model_info = ModelInfo {
         id: payload.model_id.clone(),
         name: payload.model_name.clone(),
@@ -457,10 +341,10 @@ pub async fn install_model(
         size_bytes: payload.size_bytes,
         format: payload.format,
         download_source: None,
-        filename: None, 
+        filename: None, // Will be determined by download source
         installed_version: None,
         last_updated: None,
-        tags: vec![], 
+        tags: vec![], // Tags extracted from model metadata or source
         compatibility_score: None,
         parameters: None,
         context_length: None,
@@ -472,17 +356,17 @@ pub async fn install_model(
         pricing: None,
     };
 
+    // Convert source specifier to download source
     let download_source = match payload.source {
         ModelSourceSpecifier::HuggingFace { repo_id, filename } => {
             DownloadSource::HuggingFace { repo_id, filename }
         }
-        ModelSourceSpecifier::OpenRouter { model_id } => {
-            DownloadSource::OpenRouter { model_id }
-        }
     };
 
+    // Clone for use in async block
     let download_source_clone = download_source.clone();
 
+    // Pre-create the download tracking entry so the frontend can poll immediately
     let pre_download_id = model_manager.downloader.progress_tracker()
         .start_download(
             payload.model_id.clone(),
@@ -493,28 +377,37 @@ pub async fn install_model(
 
     let return_download_id = pre_download_id.clone();
 
+    // Update registry status to Downloading
     {
         let mut reg = model_manager.registry.write().await;
         reg.update_model_status(&payload.model_id, ModelStatus::Downloading);
     }
 
+    // Start download in background
     let registry = model_manager.registry.clone();
     let downloader = model_manager.downloader.clone();
     let existing_download_id = pre_download_id.clone();
 
+    // Resolve HF token: request body takes priority, then fall back to the
+    // token the user stored in the database via the API-keys UI.
+    let hf_token = match payload.hf_token {
+        Some(t) if !t.is_empty() => Some(t),
+        _ => state.get_huggingface_token().await,
+    };
+
     tokio::spawn(async move {
-        
-        match downloader.download_model(model_info.clone(), download_source_clone.clone(), Some(existing_download_id), payload.hf_token).await {
+        match downloader.download_model(model_info.clone(), download_source_clone.clone(), Some(existing_download_id), hf_token).await {
             Ok(_download_id) => {
-                
+                // Extract the filename from the download source
                 let filename = match &download_source_clone {
                     DownloadSource::HuggingFace { filename, .. } => Some(filename.clone()),
-                    DownloadSource::OpenRouter { .. } => None, 
                 };
 
+                // Update registry status AND filename, then persist
                 let mut reg = registry.write().await;
                 reg.update_model_status(&model_info.id, ModelStatus::Installed);
 
+                // CRITICAL: Update the filename in the registry so we know which file to load
                 if let Some(fname) = filename {
                     if let Some(model) = reg.get_model_mut(&model_info.id) {
                         model.filename = Some(fname);
@@ -549,6 +442,7 @@ pub async fn install_model(
     ))
 }
 
+/// Get download progress for a specific download
 pub async fn get_download_progress(
     State(state): State<UnifiedAppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -567,6 +461,7 @@ pub async fn get_download_progress(
     Ok(Json(progress))
 }
 
+/// Get all downloads (active and completed)
 pub async fn get_active_downloads(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -580,6 +475,7 @@ pub async fn get_active_downloads(
     Ok(Json(downloads))
 }
 
+/// Cancel an ongoing download
 pub async fn cancel_download(
     State(state): State<UnifiedAppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -601,6 +497,7 @@ pub async fn cancel_download(
     }
 }
 
+/// Pause an ongoing download
 pub async fn pause_download(
     State(state): State<UnifiedAppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -613,7 +510,7 @@ pub async fn pause_download(
 
     let tracker = model_manager.downloader.progress_tracker();
     if let Some(progress) = tracker.get_progress(download_id).await {
-        
+        // Only allow pausing if the download is currently downloading
         if progress.status == crate::model_management::progress::DownloadStatus::Downloading {
             tracker.update_progress(
                 download_id,
@@ -623,7 +520,7 @@ pub async fn pause_download(
             ).await;
             Ok(Json(serde_json::json!({ "message": "Download paused" })))
         } else {
-            
+            // Return an error if trying to pause a download that isn't downloading
             Err(StatusCode::BAD_REQUEST)
         }
     } else {
@@ -631,6 +528,7 @@ pub async fn pause_download(
     }
 }
 
+/// Resume a paused download
 pub async fn resume_download(
     State(state): State<UnifiedAppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -643,7 +541,7 @@ pub async fn resume_download(
 
     let tracker = model_manager.downloader.progress_tracker();
     if let Some(progress) = tracker.get_progress(download_id).await {
-        
+        // Only allow resuming if the download is currently paused
         if progress.status == crate::model_management::progress::DownloadStatus::Paused {
             tracker.update_progress(
                 download_id,
@@ -653,7 +551,7 @@ pub async fn resume_download(
             ).await;
             Ok(Json(serde_json::json!({ "message": "Download resumed" })))
         } else {
-            
+            // Return an error if trying to resume a download that isn't paused
             Err(StatusCode::BAD_REQUEST)
         }
     } else {
@@ -661,6 +559,7 @@ pub async fn resume_download(
     }
 }
 
+/// Remove/uninstall a model
 pub async fn remove_model(
     State(state): State<UnifiedAppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -673,11 +572,13 @@ pub async fn remove_model(
 
     info!("Removing model: {}", model_id);
 
+    // Remove from storage
     if let Err(e) = model_manager.storage.remove_model(model_id) {
         error!("Failed to remove model from storage: {}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
+    // Remove from registry and persist
     let mut registry = model_manager.registry.write().await;
     registry.remove_model(model_id);
     if let Err(e) = registry.save_registry().await {
@@ -689,6 +590,7 @@ pub async fn remove_model(
     })))
 }
 
+/// Get hardware recommendations
 pub async fn get_hardware_recommendations(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -706,6 +608,7 @@ pub async fn get_hardware_recommendations(
     }))
 }
 
+/// Update user preferences for model recommendations
 pub async fn update_preferences(
     State(state): State<UnifiedAppState>,
     Json(payload): Json<UpdatePreferencesRequest>,
@@ -750,6 +653,8 @@ pub async fn update_preferences(
         };
     }
 
+    // We can't mutate the recommender through Arc, so we'll need to restructure this
+    // For now, let's just acknowledge the preferences were set
     info!("User preferences updated: {:?}", preferences);
 
     Ok(Json(serde_json::json!({
@@ -757,6 +662,7 @@ pub async fn update_preferences(
     })))
 }
 
+/// Get recommended models based on current hardware and preferences
 pub async fn get_recommended_models(
     State(state): State<UnifiedAppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -777,6 +683,7 @@ pub async fn get_recommended_models(
         max_results
     );
 
+    // Get full model info for recommended models
     let recommended_models: Vec<ModelInfo> = recommendations
         .into_iter()
         .filter_map(|(model_id, _)| {
@@ -787,6 +694,7 @@ pub async fn get_recommended_models(
     Ok(Json(recommended_models))
 }
 
+/// Hardware information response
 #[derive(Debug, Serialize)]
 pub struct HardwareInfoResponse {
     pub total_ram_gb: f32,
@@ -798,6 +706,7 @@ pub struct HardwareInfoResponse {
     pub storage_available_bytes: u64,
 }
 
+/// Get current hardware info and storage usage
 pub async fn get_hardware_info(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -822,6 +731,7 @@ pub async fn get_hardware_info(
     }))
 }
 
+/// Live system metrics response
 #[derive(Serialize)]
 pub struct SystemMetricsResponse {
     pub cpu_usage_percent: f32,
@@ -838,9 +748,10 @@ pub struct SystemMetricsResponse {
     pub memory_used_gb: f32,
     pub memory_available_gb: f32,
     pub gpu_layers_offloaded: u32,
-    pub inference_device: String, 
+    pub inference_device: String, // "GPU", "CPU", "CPU+GPU"
 }
 
+/// Switch to a different model by ID
 pub async fn switch_model(
     State(state): State<UnifiedAppState>,
     Json(payload): Json<SwitchModelRequest>,
@@ -848,6 +759,7 @@ pub async fn switch_model(
     let model_manager = state.shared_state.model_manager.as_ref()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     
+    // Look up the model in the registry by ID
     let model_info = {
         let registry = model_manager.registry.read().await;
         registry.get_model(&payload.model_id)
@@ -855,24 +767,28 @@ pub async fn switch_model(
             .clone()
     };
     
+    // Get the complete model metadata including runtime binaries
     let model_metadata = {
         let registry = model_manager.registry.read().await;
         registry.get_model_metadata(&payload.model_id).await
     };
     
+    // Verify that the model is installed and the file exists
     if model_info.status != ModelStatus::Installed {
         return Err(StatusCode::BAD_REQUEST);
     }
     
+    // Get the model's path using the storage module
     let model_path = if let Some(ref filename) = model_info.filename {
-        
+        // Use the stored filename if available
         let path = model_manager.storage.model_path(&payload.model_id, filename);
         info!("🔍 Resolving model path from registry filename: {}", path.display());
         path
     } else {
-        
+        // If no filename is stored, look for model files in the model directory
         warn!("⚠️  Model {} has no filename in registry, scanning directory...", payload.model_id);
 
+        // We can get the directory by using a dummy filename with model_path, then taking the parent
         let model_dir = model_manager.storage.model_path(&payload.model_id, "dummy").parent()
             .map(|p| p.to_path_buf())
             .ok_or_else(|| {
@@ -887,6 +803,7 @@ pub async fn switch_model(
             return Err(StatusCode::NOT_FOUND);
         }
 
+        // Look for model files in the directory
         let mut found_path = None;
         if let Ok(entries) = std::fs::read_dir(&model_dir) {
             for entry in entries.flatten() {
@@ -895,10 +812,10 @@ pub async fn switch_model(
                         let path = entry.path();
                         let ext = path.extension().unwrap_or_default().to_string_lossy().to_lowercase();
                         if matches!(ext.as_str(), "gguf" | "bin" | "ggml" | "onnx" | "trt" | "engine" | "safetensors" | "mlmodel") {
-                            
+                            // Found a valid model file
                             info!("✅ Found model file: {}", path.display());
                             found_path = Some(path);
-                            break; 
+                            break; // Take the first valid file found
                         }
                     }
                 }
@@ -922,14 +839,18 @@ pub async fn switch_model(
 
     info!("✅ Model file verified at: {}", model_path.display());
     
+    // Convert model_path to string for later use since it will be moved
     let model_path_str = model_path.to_string_lossy().to_string();
     
+    // Get the runtime manager from shared state
     let runtime_manager = {
         let guard = state.shared_state.runtime_manager.read()
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         guard.clone().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
     };
     
+    // Prepare runtime config for the new model
+    // Try to get the model's format from the registry info, default to GGUF if not recognized
     let model_format = match model_info.format.as_str().to_lowercase().as_str() {
         "gguf" => crate::model_runtime::ModelFormat::GGUF,
         "ggml" => crate::model_runtime::ModelFormat::GGML,
@@ -937,11 +858,13 @@ pub async fn switch_model(
         "tensorrt" => crate::model_runtime::ModelFormat::TensorRT,
         "safetensors" => crate::model_runtime::ModelFormat::Safetensors,
         "coreml" => crate::model_runtime::ModelFormat::CoreML,
-        _ => crate::model_runtime::ModelFormat::GGUF, 
+        _ => crate::model_runtime::ModelFormat::GGUF, // Default fallback
     };
     
+    // Determine the appropriate runtime binary based on platform and model metadata
+    // Priority: 1) Model metadata, 2) Installed engine from registry, 3) Config fallback
     let runtime_binary = if let Some(ref metadata) = model_metadata {
-        
+        // If we have model metadata with runtime binaries, try to use the platform-appropriate one
         use crate::model_runtime::platform_detector::HardwareCapabilities;
         let hw_caps = HardwareCapabilities::default();
         let platform_name = match hw_caps.platform {
@@ -950,10 +873,11 @@ pub async fn switch_model(
             crate::model_runtime::platform_detector::Platform::MacOS => "macos",
         };
 
+        // First try to get platform-specific binary from metadata
         if let Some(bin_path) = metadata.runtime_binaries.get(platform_name) {
             Some(bin_path.clone())
         } else {
-            
+            // Fallback to installed engine from engine registry, then to config llama_bin
             if let Some(ref engine_manager) = state.shared_state.engine_manager {
                 let registry = engine_manager.registry.read().await;
                 registry.get_default_engine_binary_path()
@@ -965,7 +889,7 @@ pub async fn switch_model(
             }
         }
     } else {
-        
+        // No metadata available, use installed engine from registry, then config llama_bin
         if let Some(ref engine_manager) = state.shared_state.engine_manager {
             let registry = engine_manager.registry.read().await;
             registry.get_default_engine_binary_path()
@@ -979,7 +903,7 @@ pub async fn switch_model(
     
     let runtime_config = crate::model_runtime::RuntimeConfig {
         model_path: model_path.clone(),
-        format: model_format, 
+        format: model_format, // Use the detected format from model info
         host: state.shared_state.config.llama_host.clone(),
         port: state.shared_state.config.llama_port,
         context_size: state.shared_state.config.ctx_size,
@@ -988,7 +912,7 @@ pub async fn switch_model(
         gpu_layers: state.shared_state.config.gpu_layers,
         parallel_slots: state.shared_state.config.parallel_slots,
         ubatch_size: state.shared_state.config.ubatch_size,
-        runtime_binary: runtime_binary.clone(), 
+        runtime_binary: runtime_binary.clone(), // Use platform-appropriate binary
         draft_model_path: {
             let p = &state.shared_state.config.draft_model_path;
             if p == "none" || p.is_empty() { None } else { Some(std::path::PathBuf::from(p)) }
@@ -1006,15 +930,14 @@ pub async fn switch_model(
     info!("   Context Size: {}", runtime_config.context_size);
     info!("   GPU Layers: {}", runtime_config.gpu_layers);
 
+    // Skip re-initialization if this exact model is already loaded and healthy.
+    // This avoids a shutdown→restart race where the model becomes briefly unavailable.
     if let Some(current_config) = runtime_manager.get_current_config().await {
         if current_config.model_path == runtime_config.model_path
             && runtime_manager.is_ready().await
         {
             info!("✅ Model {} is already loaded and ready — skipping re-initialization", model_info.name);
-            if let Some(data_dir) = dirs::data_dir() {
-                let last_model_path = data_dir.join("Aud.io").join("last_model.txt");
-                let _ = std::fs::write(last_model_path, &payload.model_id);
-            }
+            let _ = std::fs::write(crate::utils::PathResolver::last_model_path(), &payload.model_id);
             return Ok(Json(SwitchModelResponse {
                 message: format!("Model {} is already loaded and ready for inference", model_info.name),
                 model_id: payload.model_id.clone(),
@@ -1023,18 +946,18 @@ pub async fn switch_model(
         }
     }
 
+    // Use initialize_auto to automatically detect the model format
     match runtime_manager.initialize_auto(runtime_config).await {
         Ok(base_url) => {
             info!("Runtime initialized at {}, performing health check...", base_url);
 
+            // CRITICAL: Verify runtime is actually ready before returning success
             match runtime_manager.health_check().await {
                 Ok(_) => {
                     info!("✅ Model {} activated successfully and health check passed", model_info.name);
 
-                    if let Some(data_dir) = dirs::data_dir() {
-                        let last_model_path = data_dir.join("Aud.io").join("last_model.txt");
-                        let _ = std::fs::write(last_model_path, &payload.model_id);
-                    }
+                    // Save last used model for auto-load on next startup
+                    let _ = std::fs::write(crate::utils::PathResolver::last_model_path(), &payload.model_id);
 
                     Ok(Json(SwitchModelResponse {
                         message: format!("Model {} loaded and ready for inference", model_info.name),
@@ -1052,49 +975,32 @@ pub async fn switch_model(
         Err(e) => {
             let error_msg = e.to_string();
 
+            // Check if the error is due to a missing binary
             if error_msg.contains("binary not found")
                 || error_msg.contains("not found at")
                 || error_msg.contains("No such file")
             {
                 error!("Engine binary not found - attempting automatic download and retry");
 
+                // Attempt to download engine automatically
                 if let Some(ref engine_manager) = state.shared_state.engine_manager {
                     match engine_manager.ensure_engine_available().await {
-                        Ok(true) => {
+                        Ok(_) => {
                             info!("Engine downloaded successfully, retrying model switch...");
-
                             return Ok(Json(SwitchModelResponse {
                                 message: "Engine was downloaded. Please retry switching models.".to_string(),
                                 model_id: payload.model_id.clone(),
                                 model_path: "retry_required".to_string(),
                             }));
                         }
-                        Ok(false) => {
-                            error!("Failed to auto-download engine - download returned false");
-                            
-                            return Ok(Json(SwitchModelResponse {
-                                message: "Engine download failed. Please check your internet connection and try again.".to_string(),
-                                model_id: payload.model_id.clone(),
-                                model_path: "engine_download_failed".to_string(),
-                            }));
-                        }
                         Err(e) => {
-                            error!("Failed to auto-download engine: {}", e);
-                            
-                            return Ok(Json(SwitchModelResponse {
-                                message: format!("Engine download error: {}", e),
-                                model_id: payload.model_id.clone(),
-                                model_path: "engine_download_error".to_string(),
-                            }));
+                            error!("Engine download failed: {}", e);
+                            return Err(StatusCode::SERVICE_UNAVAILABLE);
                         }
                     }
                 } else {
-                    error!("No engine manager available");
-                    return Ok(Json(SwitchModelResponse {
-                        message: "Engine manager not initialized. Please restart the application.".to_string(),
-                        model_id: payload.model_id.clone(),
-                        model_path: "no_engine_manager".to_string(),
-                    }));
+                    error!("No engine manager available — cannot auto-download engine");
+                    return Err(StatusCode::SERVICE_UNAVAILABLE);
                 }
             }
 
@@ -1104,14 +1010,16 @@ pub async fn switch_model(
     }
 }
 
+/// Get live system metrics including CPU/GPU usage
 pub async fn get_system_metrics(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
     use sysinfo::System;
 
+    // CPU metrics - need two refreshes with delay for accurate usage
     let mut system = System::new_all();
     system.refresh_cpu();
-    
+    // Small delay for accurate CPU measurement
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     system.refresh_cpu();
     system.refresh_memory();
@@ -1125,6 +1033,7 @@ pub async fn get_system_metrics(
     let used_mem = (system.total_memory() - system.available_memory()) as f32 / (1024.0 * 1024.0 * 1024.0);
     let available_mem = system.available_memory() as f32 / (1024.0 * 1024.0 * 1024.0);
 
+    // GPU metrics
     let (gpu_available, gpu_name, gpu_usage, gpu_vram_total, gpu_vram_used, gpu_temp) = {
         #[cfg(feature = "nvidia")]
         {
@@ -1155,11 +1064,12 @@ pub async fn get_system_metrics(
         }
         #[cfg(not(feature = "nvidia"))]
         {
-            
+            // Without NVML, report no GPU metrics - GPU detection happens at config level
             (false, String::from("Not detected"), 0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32)
         }
     };
 
+    // Determine inference device from config
     let gpu_layers = state.shared_state.config.gpu_layers;
     let inference_device = if !gpu_available {
         "CPU".to_string()
@@ -1190,20 +1100,22 @@ pub async fn get_system_metrics(
     }))
 }
 
+/// Storage metadata response
 #[derive(Debug, Serialize)]
 pub struct StorageMetadataResponse {
-    
+    /// System paths
     pub paths: StoragePaths,
-    
+    /// Downloaded models with metadata
     pub models: Vec<DownloadedModelInfo>,
-    
+    /// Storage usage statistics
     pub storage_stats: StorageStats,
-    
+    /// Database information
     pub database_info: DatabaseInfo,
-    
+    /// Installed engines information
     pub engines: Vec<InstalledEngineInfo>,
 }
 
+/// Storage paths on the system
 #[derive(Debug, Serialize)]
 pub struct StoragePaths {
     pub app_data_dir: String,
@@ -1213,6 +1125,7 @@ pub struct StoragePaths {
     pub engines_dir: String,
 }
 
+/// Information about an installed engine
 #[derive(Debug, Serialize)]
 pub struct InstalledEngineInfo {
     pub id: String,
@@ -1227,6 +1140,7 @@ pub struct InstalledEngineInfo {
     pub is_default: bool,
 }
 
+/// Information about a downloaded model
 #[derive(Debug, Serialize)]
 pub struct DownloadedModelInfo {
     pub id: String,
@@ -1240,6 +1154,7 @@ pub struct DownloadedModelInfo {
     pub metadata_path: Option<String>,
 }
 
+/// Storage usage statistics
 #[derive(Debug, Serialize)]
 pub struct StorageStats {
     pub models_total_bytes: u64,
@@ -1249,6 +1164,7 @@ pub struct StorageStats {
     pub model_count: usize,
 }
 
+/// Database information
 #[derive(Debug, Serialize)]
 pub struct DatabaseInfo {
     pub path: String,
@@ -1256,6 +1172,7 @@ pub struct DatabaseInfo {
     pub size_human: String,
 }
 
+/// Get comprehensive local storage metadata
 pub async fn get_storage_metadata(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -1264,18 +1181,11 @@ pub async fn get_storage_metadata(
     let model_manager = state.shared_state.model_manager.as_ref()
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     
-    let app_data_dir = dirs::data_dir()
-        .map(|d| {
-            if cfg!(target_os = "windows") || cfg!(target_os = "macos") {
-                d.join("Aud.io")
-            } else {
-                d.join("aud.io")
-            }
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from("./aud.io-data"));
-    
-    let engines_dir = app_data_dir.join("engines");
+    // Get app data directory using dirs crate
+    let app_data_dir = crate::utils::PathResolver::data_dir();
+    let engines_dir = crate::utils::PathResolver::engines_dir();
 
+    // Get storage paths
     let paths = StoragePaths {
         app_data_dir: app_data_dir.to_string_lossy().to_string(),
         models_dir: model_manager.storage.location.models_dir.to_string_lossy().to_string(),
@@ -1284,6 +1194,7 @@ pub async fn get_storage_metadata(
         engines_dir: engines_dir.to_string_lossy().to_string(),
     };
     
+    // Get downloaded models with metadata
     let mut models = Vec::new();
     let installed_models: Vec<crate::model_management::registry::ModelInfo> = {
         let registry = model_manager.registry.read().await;
@@ -1294,7 +1205,7 @@ pub async fn get_storage_metadata(
     };
     
     for model in installed_models {
-        
+        // Try to load metadata
         let metadata_path = model_manager.storage.metadata_path(&model.id);
         let download_date = if metadata_path.exists() {
             std::fs::metadata(&metadata_path)
@@ -1319,6 +1230,7 @@ pub async fn get_storage_metadata(
             "unknown".to_string()
         };
         
+        // Get actual file size from disk
         let model_dir = model_manager.storage.location.models_dir.join(
             model.id.replace(':', "_").replace('/', "_").replace('\\', "_")
         );
@@ -1350,6 +1262,7 @@ pub async fn get_storage_metadata(
         });
     }
     
+    // Get storage stats
     let models_total_bytes = model_manager.storage.get_storage_usage().unwrap_or(0);
     let available_space_bytes = model_manager.storage.get_available_space().unwrap_or(0);
     
@@ -1361,6 +1274,7 @@ pub async fn get_storage_metadata(
         model_count: models.len(),
     };
     
+    // Get database info
     let db_path = app_data_dir.join("memory.db");
     let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
     
@@ -1370,6 +1284,7 @@ pub async fn get_storage_metadata(
         size_human: format_bytes(db_size),
     };
 
+    // Get installed engines info
     let mut engines = Vec::new();
     if let Some(ref engine_manager) = state.shared_state.engine_manager {
         let registry = engine_manager.registry.read().await;
@@ -1402,6 +1317,7 @@ pub async fn get_storage_metadata(
     }))
 }
 
+/// Format bytes to human-readable string
 fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
@@ -1415,6 +1331,11 @@ fn format_bytes(bytes: u64) -> String {
     format!("{:.2} {}", size, UNITS[unit_index])
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase A: HuggingFace Gated Model Access Check
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Query parameters for the HF access-check endpoint
 #[derive(Debug, Deserialize)]
 pub struct HfAccessParams {
     pub repo_id: String,
@@ -1422,16 +1343,21 @@ pub struct HfAccessParams {
     pub hf_token: Option<String>,
 }
 
+/// Response body for the HF access-check endpoint
 #[derive(Debug, Serialize)]
 pub struct HfAccessResponse {
-    
+    /// One of: "accessible", "not_approved", "unauthorized", "not_found", "error"
     pub status: String,
-    
+    /// `true` when the user may start a download immediately
     pub can_download: bool,
-    
+    /// Human-readable explanation
     pub message: String,
 }
 
+/// `GET /models/hf/access?repo_id=…&filename=…&hf_token=…`
+///
+/// Performs a HEAD request against the HuggingFace CDN to determine whether
+/// the supplied token grants download access to a gated repository.
 pub async fn check_hf_access(
     Query(params): Query<HfAccessParams>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -1483,175 +1409,3 @@ pub async fn check_hf_access(
     }))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct OpenRouterCatalogParams {
-    
-    pub page: Option<usize>,
-    
-    pub per_page: Option<usize>,
-    
-    pub search: Option<String>,
-    
-    pub provider: Option<String>,
-    
-    pub free_only: Option<bool>,
-    
-    pub min_context: Option<u64>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct OpenRouterCatalogResponse {
-    pub models: Vec<ModelInfo>,
-    pub total: usize,
-    pub page: usize,
-    pub per_page: usize,
-    pub total_pages: usize,
-}
-
-pub async fn openrouter_catalog(
-    State(state): State<UnifiedAppState>,
-    Query(params): Query<OpenRouterCatalogParams>,
-) -> Result<impl IntoResponse, StatusCode> {
-    let model_manager = state
-        .shared_state
-        .model_manager
-        .as_ref()
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let page = params.page.unwrap_or(1).max(1);
-    let per_page = params.per_page.unwrap_or(50).clamp(1, 200);
-
-    let mut models: Vec<ModelInfo> = {
-        let registry = model_manager.registry.read().await;
-        registry
-            .list_models()
-            .into_iter()
-            .filter(|m| m.download_source.as_deref() == Some("openrouter"))
-            .cloned()
-            .collect()
-    };
-
-    if let Some(ref search) = params.search {
-        let q = search.to_lowercase();
-        models.retain(|m| {
-            m.name.to_lowercase().contains(&q)
-                || m.id.to_lowercase().contains(&q)
-                || m.description
-                    .as_ref()
-                    .map_or(false, |d| d.to_lowercase().contains(&q))
-                || m.provider
-                    .as_ref()
-                    .map_or(false, |p| p.to_lowercase().contains(&q))
-        });
-    }
-
-    if let Some(ref provider) = params.provider {
-        let prov = provider.to_lowercase();
-        models.retain(|m| {
-            m.provider
-                .as_ref()
-                .map_or(false, |p| p.to_lowercase().contains(&prov))
-                || m.id.to_lowercase().starts_with(&prov)
-        });
-    }
-
-    if params.free_only.unwrap_or(false) {
-        models.retain(|m| {
-            m.pricing.as_ref().map_or(false, |p| p.is_free())
-                || m.tags.iter().any(|t| t == "free")
-        });
-    }
-
-    if let Some(min_ctx) = params.min_context {
-        models.retain(|m| m.context_length.map_or(false, |ctx| ctx >= min_ctx));
-    }
-
-    models.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let total = models.len();
-    let total_pages = total.div_ceil(per_page);
-    let start = (page - 1) * per_page;
-    let page_models: Vec<ModelInfo> = models.into_iter().skip(start).take(per_page).collect();
-
-    Ok(Json(OpenRouterCatalogResponse {
-        models: page_models,
-        total,
-        page,
-        per_page,
-        total_pages,
-    }))
-}
-
-#[derive(Debug, Serialize)]
-pub struct OpenRouterQuotaResponse {
-    
-    pub usage_usd: f64,
-    
-    pub limit_usd: Option<f64>,
-    
-    pub is_free_tier: bool,
-    
-    pub remaining_usd: Option<f64>,
-}
-
-pub async fn openrouter_quota(
-    State(state): State<UnifiedAppState>,
-) -> Result<impl IntoResponse, StatusCode> {
-    
-    let api_key = state
-        .shared_state
-        .database_pool
-        .api_keys
-        .get_key_plaintext(&ApiKeyType::OpenRouter)
-        .ok()
-        .flatten()
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let resp = client
-        .get("https://openrouter.ai/api/v1/auth/key")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .send()
-        .await
-        .map_err(|e| {
-            warn!("OpenRouter quota request failed: {}", e);
-            StatusCode::BAD_GATEWAY
-        })?;
-
-    if !resp.status().is_success() {
-        warn!("OpenRouter /auth/key returned {}", resp.status());
-        return Err(StatusCode::BAD_GATEWAY);
-    }
-
-    #[derive(serde::Deserialize)]
-    struct OrKeyData {
-        usage: Option<f64>,
-        limit: Option<f64>,
-        is_free_tier: Option<bool>,
-    }
-    #[derive(serde::Deserialize)]
-    struct OrKeyResp {
-        data: OrKeyData,
-    }
-
-    let body: OrKeyResp = resp.json().await.map_err(|e| {
-        warn!("Failed to parse OpenRouter quota response: {}", e);
-        StatusCode::BAD_GATEWAY
-    })?;
-
-    let usage = body.data.usage.unwrap_or(0.0);
-    let limit = body.data.limit;
-    let is_free_tier = body.data.is_free_tier.unwrap_or(false);
-    let remaining = limit.map(|l| (l - usage).max(0.0));
-
-    Ok(Json(OpenRouterQuotaResponse {
-        usage_usd: usage,
-        limit_usd: limit,
-        is_free_tier,
-        remaining_usd: remaining,
-    }))
-}

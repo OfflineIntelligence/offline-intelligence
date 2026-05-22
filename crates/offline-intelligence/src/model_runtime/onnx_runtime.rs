@@ -1,3 +1,7 @@
+//! ONNX Runtime Adapter
+//!
+//! Adapter for ONNX format models using ONNX Runtime.
+//! This implementation provides a basic HTTP server wrapper around ONNX Runtime.
 
 use async_trait::async_trait;
 use super::runtime_trait::*;
@@ -26,7 +30,11 @@ impl ONNXRuntime {
         }
     }
 
+    /// Start ONNX inference server
+    /// Note: This requires a separate ONNX server implementation or wrapper
     async fn start_server(&mut self, config: &RuntimeConfig) -> anyhow::Result<()> {
+        // For ONNX, we need a server wrapper (could be Python-based or custom Rust)
+        // This is a placeholder implementation
         
         let binary_path = config.runtime_binary.as_ref()
             .ok_or_else(|| anyhow::anyhow!("ONNX runtime requires runtime_binary path (e.g., onnx-server)"))?;
@@ -53,6 +61,7 @@ impl ONNXRuntime {
         self.server_process = Some(child);
         self.base_url = format!("http://{}:{}", config.host, config.port);
 
+        // Wait for server to be ready (up to 120 seconds) with exponential backoff.
         let _start = std::time::Instant::now();
         let mut delay_ms: u64 = 100;
         let mut last_log_secs: u64 = 0;

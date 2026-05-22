@@ -1,8 +1,11 @@
+// "D:\_ProjectWorks\AUDIO_Interface\Server\src\memory_db\schema.rs"
+//! Database schema definitions for the memory system
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
+/// Represents a conversation session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -11,17 +14,19 @@ pub struct Session {
     pub metadata: SessionMetadata,
 }
 
+// Chat persistence: Session metadata with serde defaults for backward compatibility with existing database records
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionMetadata {
     pub title: Option<String>,
-    #[serde(default)]  
+    #[serde(default)]  // Handle old records missing this field
     pub tags: Vec<String>,
-    #[serde(default)]  
+    #[serde(default)]  // Handle old records missing this field
     pub user_defined: HashMap<String, String>,
-    #[serde(default)]  
+    #[serde(default)]  // Handle old records missing this field
     pub pinned: bool,
 }
 
+/// Represents a single message in a conversation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredMessage {
     pub id: i64,
@@ -35,6 +40,7 @@ pub struct StoredMessage {
     pub embedding_generated: bool,
 }
 
+/// Represents a conversation summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
     pub id: i64,
@@ -47,6 +53,7 @@ pub struct Summary {
     pub generated_at: DateTime<Utc>,
 }
 
+/// Represents a preserved detail from a message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Detail {
     pub id: i64,
@@ -60,6 +67,7 @@ pub struct Detail {
     pub last_accessed: DateTime<Utc>,
 }
 
+/// Represents an embedding vector for semantic search
 #[derive(Debug, Clone)]
 pub struct Embedding {
     pub id: i64,
@@ -69,6 +77,9 @@ pub struct Embedding {
     pub generated_at: DateTime<Utc>,
 }
 
+/// Cumulative summary of a session's full conversation history.
+/// There is exactly one row per session. It is replaced (not appended) on every
+/// KV cache clear, so it always covers everything from the start of the session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub session_id: String,
@@ -79,6 +90,7 @@ pub struct SessionSummary {
     pub last_updated: DateTime<Utc>,
 }
 
+/// Represents KV snapshot for cache management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KvSnapshot {
     pub id: i64,
@@ -92,6 +104,7 @@ pub struct KvSnapshot {
     pub created_at: DateTime<Utc>,
 }
 
+/// Represents search result
 #[derive(Debug, Clone)]
 pub struct SearchResult {
     pub message: StoredMessage,
@@ -106,6 +119,7 @@ pub enum SearchSource {
     Hybrid,
 }
 
+/// Database statistics
 #[derive(Debug, Clone)]
 pub struct DatabaseStats {
     pub total_sessions: i64,
@@ -116,6 +130,7 @@ pub struct DatabaseStats {
     pub database_size_bytes: i64,
 }
 
+/// SQL statements for table creation
 pub const SCHEMA_SQL: &str = "
 -- Sessions table
 CREATE TABLE IF NOT EXISTS sessions (

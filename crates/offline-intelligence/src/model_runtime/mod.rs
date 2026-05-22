@@ -1,3 +1,13 @@
+//! Model Runtime Abstraction Layer
+//!
+//! Provides a unified interface for hosting multiple model formats (GGUF, ONNX, 
+//! TensorRT, Safetensors, GGML, CoreML) through a trait-based runtime system.
+//!
+//! Architecture:
+//! - Each model format has its own runtime adapter
+//! - All runtimes expose OpenAI-compatible HTTP API
+//! - Maintains 1-hop architecture: Rust → HTTP → Runtime Server
+//! - Automatic format detection from file extension
 
 pub mod runtime_trait;
 pub mod gguf_runtime;

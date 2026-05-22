@@ -1,10 +1,20 @@
+/// Build script for offline-intelligence.
+///
+/// Reads the workspace-root `.env` file and emits `cargo:rustc-env` directives
+/// for Google OAuth credentials so that `option_env!()` in thread_server.rs
+/// picks them up during both `npm run tauri dev` and `npm run tauri build`
+/// without requiring the developer to manually set shell env vars.
+///
+/// Any values already present in the real environment take priority — the
+/// `.env` file only fills in missing entries.
 
 fn main() {
-    
+    // Locate the workspace root (.env lives next to the top-level Cargo.toml).
+    // CARGO_MANIFEST_DIR = <workspace>/crates/offline-intelligence
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     let workspace_root = std::path::Path::new(&manifest_dir)
-        .parent() 
-        .and_then(|p| p.parent()); 
+        .parent() // crates/
+        .and_then(|p| p.parent()); // workspace root
 
     if let Some(root) = workspace_root {
         let env_path = root.join(".env");
@@ -12,13 +22,15 @@ fn main() {
             if let Ok(contents) = std::fs::read_to_string(&env_path) {
                 for line in contents.lines() {
                     let line = line.trim();
-                    
+                    // Skip comments and blank lines.
                     if line.is_empty() || line.starts_with('#') {
                         continue;
                     }
                     if let Some((key, value)) = line.split_once('=') {
                         let key = key.trim();
-                        
+                        // Forward OAuth credentials and SMTP settings so they're
+                        // baked into the binary for distributed / installed builds
+                        // (no .env file is bundled with the installer).
                         let allowed = matches!(
                             key,
                             "GOOGLE_CLIENT_ID"
@@ -31,7 +43,7 @@ fn main() {
                         if !allowed {
                             continue;
                         }
-                        
+                        // Strip optional surrounding quotes from the value.
                         let value = value.trim().trim_matches('"').trim_matches('\'');
                         if value.is_empty() {
                             continue;

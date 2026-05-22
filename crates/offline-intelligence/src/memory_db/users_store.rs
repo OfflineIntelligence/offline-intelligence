@@ -1,3 +1,7 @@
+//! Users Store - User authentication and management
+//!
+//! Stores user accounts with hashed passwords (email/password users) or Google OAuth.
+//! Google users have password_hash = "google-oauth-user" sentinel and email_verified = 1.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -55,6 +59,7 @@ impl UsersStore {
             [],
         )?;
 
+        // Idempotent migrations: ADD COLUMN silently fails if column already exists
         let _ = conn.execute("ALTER TABLE users ADD COLUMN google_id TEXT", []);
         let _ = conn.execute("ALTER TABLE users ADD COLUMN avatar_url TEXT", []);
 
@@ -82,6 +87,14 @@ impl UsersStore {
         Ok(id)
     }
 
+    /// Create or update a Google OAuth user.
+    ///
+    /// Logic:
+    /// 1. Look up by `google_id` → update name/avatar, return existing user
+    /// 2. Look up by `email` → link Google account to existing user
+    /// 3. Otherwise → create a new Google user (no password)
+    /// Returns `(User, is_new_user)` where `is_new_user` is `true` only when a
+    /// brand-new account was created (Step 3 — never seen this Google ID or email).
     pub fn upsert_google_user(
         &self,
         email: &str,
@@ -93,6 +106,7 @@ impl UsersStore {
 
         let mut is_new_user = false;
 
+        // Step 1: find by google_id
         let by_google_id = conn
             .query_row(
                 "SELECT id FROM users WHERE google_id = ?1",
@@ -102,13 +116,13 @@ impl UsersStore {
             .optional()?;
 
         if let Some(user_id) = by_google_id {
-            
+            // Update name and avatar in case they changed in Google profile
             conn.execute(
                 "UPDATE users SET name = ?1, avatar_url = ?2 WHERE id = ?3",
                 params![name, avatar_url, user_id],
             )?;
         } else {
-            
+            // Step 2: find by email (account linking)
             let by_email = conn
                 .query_row(
                     "SELECT id FROM users WHERE email = ?1",
@@ -118,13 +132,13 @@ impl UsersStore {
                 .optional()?;
 
             if let Some(user_id) = by_email {
-                
+                // Link the Google account to the existing email/password account
                 conn.execute(
                     "UPDATE users SET google_id = ?1, avatar_url = ?2, email_verified = 1 WHERE id = ?3",
                     params![google_id, avatar_url, user_id],
                 )?;
             } else {
-                
+                // Step 3: brand-new Google user
                 let now = Utc::now().to_rfc3339();
                 conn.execute(
                     "INSERT INTO users (email, name, password_hash, email_verified, google_id, avatar_url, created_at)
@@ -135,6 +149,7 @@ impl UsersStore {
             }
         }
 
+        // Fetch and return the final user record
         let user = conn.query_row(
             "SELECT id, email, name, password_hash, email_verified, verification_token,
                     created_at, verified_at, google_id, avatar_url

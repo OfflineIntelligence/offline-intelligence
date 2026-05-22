@@ -1,17 +1,21 @@
+//! Engine Downloader
+//!
+//! Handles downloading and installing llama.cpp engines from official sources
+//! and third-party providers, with verification and progress tracking.
 
 use anyhow::Result;
-use tracing::error;
 use futures_util::StreamExt;
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, info, warn};
+use tracing::{error, info};
 
 use super::registry::{EngineInfo, EngineStatus};
 use super::download_progress::{EngineDownloadProgressTracker, EngineDownloadProgress, EngineDownloadStatus};
 
+/// Source for engine downloads
 #[derive(Debug, Clone)]
 pub enum EngineSource {
     OfficialGithub,
@@ -19,6 +23,7 @@ pub enum EngineSource {
     Custom(String),
 }
 
+/// Handles downloading and installing engines
 pub struct EngineDownloader {
     client: Client,
     download_dir: PathBuf,
@@ -29,36 +34,46 @@ impl EngineDownloader {
     pub fn new() -> Self {
         Self {
             client: Client::new(),
-            download_dir: std::env::temp_dir().join("aud_io_engines"),
+            download_dir: std::env::temp_dir().join("offline_intelligence_engines"),
             progress_tracker: Arc::new(EngineDownloadProgressTracker::new()),
         }
     }
 
+    /// Download and install an engine
     pub async fn download_engine(&self, engine_info: &EngineInfo) -> Result<EngineInfo> {
         info!("Starting download of engine: {}", engine_info.name);
         
         let engine_id = engine_info.id.clone();
         
+        // Start tracking download progress with proper engine_id field
         self.progress_tracker.start_download(
             engine_id.clone(),
             engine_info.name.clone(),
             engine_info.file_size,
         ).await;
         
+        // Create temporary download directory
         fs::create_dir_all(&self.download_dir).await?;
         
+        // Download the archive with progress tracking
         let archive_path = self.download_archive_with_progress(engine_info).await?;
         
+        // Update status to extracting
         self.progress_tracker.update_status(&engine_id, EngineDownloadStatus::Extracting).await;
         
+        // Extract and install
         let install_path = self.extract_and_install(engine_info, &archive_path).await?;
         
+        // Update status to verifying
         self.progress_tracker.update_status(&engine_id, EngineDownloadStatus::Verifying).await;
         
+        // Verify installation
         self.verify_installation(engine_info, &install_path).await?;
         
+        // Clean up temporary files
         let _ = fs::remove_file(&archive_path).await;
         
+        // Mark as completed
         self.progress_tracker.update_progress(
             &engine_id, 
             engine_info.file_size, 
@@ -66,6 +81,7 @@ impl EngineDownloader {
             None
         ).await;
         
+        // Return updated engine info with installation details
         let mut installed_engine = engine_info.clone();
         installed_engine.status = EngineStatus::Installed;
         installed_engine.install_path = Some(install_path);
@@ -74,6 +90,7 @@ impl EngineDownloader {
         Ok(installed_engine)
     }
     
+    /// Download engine archive from URL with progress tracking
     async fn download_archive_with_progress(&self, engine_info: &EngineInfo) -> Result<PathBuf> {
         let filename = self.get_archive_filename(engine_info);
         let archive_path = self.download_dir.join(&filename);
@@ -81,6 +98,7 @@ impl EngineDownloader {
         
         info!("Downloading {} from {} to {:?}", engine_info.name, engine_info.download_url, archive_path);
         
+        // Update status to downloading
         self.progress_tracker.update_status(&engine_id, EngineDownloadStatus::Downloading).await;
         
         let response = self.make_download_request(engine_info).await?;
@@ -90,14 +108,17 @@ impl EngineDownloader {
         let mut downloaded: u64 = 0;
         let mut file = fs::File::create(&archive_path).await?;
         
+        // Track download start time for speed calculation
         let start_time = std::time::Instant::now();
         
+        // Stream the response body and report progress
         let mut stream = response.bytes_stream();
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             file.write_all(&chunk).await?;
             downloaded += chunk.len() as u64;
             
+            // Calculate speed and update progress every 100KB or on completion
             if downloaded % (100 * 1024) < chunk.len() as u64 || chunk.len() == 0 {
                 let elapsed_secs = start_time.elapsed().as_secs_f64();
                 let speed_bps = if elapsed_secs > 0.0 {
@@ -106,6 +127,7 @@ impl EngineDownloader {
                     0.0
                 };
                 
+                // Get current progress to update speed
                 if let Some(mut progress) = self.progress_tracker.get_progress(&engine_id).await {
                     progress.bytes_downloaded = downloaded;
                     progress.total_bytes = total_size;
@@ -113,7 +135,7 @@ impl EngineDownloader {
                     if total_size > 0 {
                         progress.progress_percentage = (downloaded as f32 / total_size as f32) * 100.0;
                     }
-                    
+                    // Update through the tracker
                     self.progress_tracker.update_progress(
                         &engine_id,
                         downloaded,
@@ -130,14 +152,17 @@ impl EngineDownloader {
         Ok(archive_path)
     }
 
+    /// Extract archive and install engine
     async fn extract_and_install(&self, engine_info: &EngineInfo, archive_path: &PathBuf) -> Result<PathBuf> {
         let engine_storage_path = self.get_engine_storage_path()?;
         let install_path = engine_storage_path.join(&engine_info.id);
         
+        // Create installation directory
         fs::create_dir_all(&install_path).await?;
         
         info!("Extracting to {:?}", install_path);
         
+        // Handle different archive formats
         if archive_path.extension().map_or(false, |ext| ext == "zip") {
             self.extract_zip(archive_path, &install_path).await?;
         } else if archive_path.extension().map_or(false, |ext| ext == "tar" || ext == "gz") {
@@ -146,6 +171,11 @@ impl EngineDownloader {
             return Err(anyhow::anyhow!("Unsupported archive format"));
         }
         
+        // Make ALL extracted files executable on Unix (macOS + Linux).
+        // llama.cpp releases ship with multiple dylibs alongside the binary
+        // (libllama.dylib, libggml.dylib, libggml-metal.dylib, etc.).
+        // Only chmod-ing the main binary leaves the dylibs at the archive's
+        // default mode (often 0o644), which prevents dlopen from loading them.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -163,16 +193,26 @@ impl EngineDownloader {
             }
         }
 
+        // On macOS: remove the Gatekeeper quarantine extended attribute from
+        // every file in the installation directory.
+        //
+        // Any file fetched programmatically (not opened by the user in Finder)
+        // gets `com.apple.quarantine` set by the OS.  Running a quarantined
+        // binary triggers a "Developer cannot be verified" dialog or a silent
+        // "Operation not permitted" error.  `xattr -r -d` applies recursively
+        // so all dylibs are also cleared in one call.
         #[cfg(target_os = "macos")]
         self.remove_quarantine_attribute(&install_path).await;
 
+        // Save engine metadata
         self.save_engine_metadata(engine_info, &install_path).await?;
         
         Ok(install_path)
     }
 
+    /// Extract ZIP archive
     async fn extract_zip(&self, archive_path: &PathBuf, destination: &PathBuf) -> Result<()> {
-        
+        // Convert to sync operation using blocking task
         let archive_path_owned = archive_path.clone();
         let destination_owned = destination.clone();
         
@@ -219,6 +259,15 @@ impl EngineDownloader {
         }
     }
 
+    /// Extract tar.gz archive
+    ///
+    /// llama.cpp tar.gz releases use a top-level version directory, e.g.:
+    ///   llama-b8037/llama-server
+    ///   llama-b8037/libllama.dylib
+    ///   ./  (root entry)
+    ///
+    /// We strip that first path component so all files land flat in `destination`,
+    /// matching the same layout produced by the ZIP extractor for Windows.
     async fn extract_tar_gz(&self, archive_path: &PathBuf, destination: &PathBuf) -> Result<()> {
         let archive_path_owned = archive_path.clone();
         let destination_owned = destination.clone();
@@ -234,36 +283,40 @@ impl EngineDownloader {
                         let mut entry = entry?;
                         let raw_path = entry.path()?.into_owned();
 
+                        // Strip the leading "./" root entry — skip it entirely.
+                        // Then strip the top-level version directory (e.g. "llama-b8037/")
+                        // so the binary lands flat at destination/llama-server.
                         let mut components = raw_path.components();
                         let first = components.next();
 
                         let stripped = match first {
-                            
+                            // Entry is exactly "." — skip (it's the root dir entry)
                             Some(std::path::Component::CurDir) => {
                                 let rest: std::path::PathBuf = components.collect();
                                 if rest.as_os_str().is_empty() {
-                                    continue; 
+                                    continue; // skip the bare "." entry
                                 }
-                                
+                                // Strip another leading component if present (e.g. "./llama-b8037/")
                                 let mut inner = rest.components();
-                                inner.next(); 
+                                inner.next(); // skip version dir
                                 let final_path: std::path::PathBuf = inner.collect();
                                 if final_path.as_os_str().is_empty() {
                                     continue;
                                 }
                                 final_path
                             }
-                            
+                            // Entry starts with version dir directly (e.g. "llama-b8037/llama-server")
                             Some(_) => {
                                 let rest: std::path::PathBuf = components.collect();
                                 if rest.as_os_str().is_empty() {
-                                    continue; 
+                                    continue; // skip the version dir entry itself
                                 }
                                 rest
                             }
                             None => continue,
                         };
 
+                        // Prevent directory traversal
                         if stripped.components().any(|c| c == std::path::Component::ParentDir) {
                             continue;
                         }
@@ -292,6 +345,7 @@ impl EngineDownloader {
         }
     }
 
+    /// Verify that the engine was installed correctly
     async fn verify_installation(&self, engine_info: &EngineInfo, install_path: &PathBuf) -> Result<()> {
         let binary_path = install_path.join(&engine_info.binary_name);
 
@@ -299,6 +353,11 @@ impl EngineDownloader {
             return Err(anyhow::anyhow!("Engine binary not found at {:?}", binary_path));
         }
 
+        // Test that the binary can be spawned.  We intentionally ignore the
+        // exit code: `llama-server --help` exits with code 1 on many llama.cpp
+        // builds (it prints help text then returns 1), so checking
+        // `status.success()` would incorrectly reject a healthy binary.
+        // What matters is that the OS was able to execute it at all.
         match tokio::process::Command::new(&binary_path)
             .arg("--help")
             .output()
@@ -324,6 +383,14 @@ impl EngineDownloader {
         }
     }
 
+    /// Remove the macOS Gatekeeper quarantine extended attribute from every
+    /// file in `dir` so that programmatically-downloaded binaries and dylibs
+    /// can be executed without a "Developer cannot be verified" dialog.
+    ///
+    /// Uses `xattr -r -d com.apple.quarantine <dir>` which is available on
+    /// all macOS versions that Tauri targets (10.13+).  Errors are logged but
+    /// not propagated — a failed removal is non-fatal because the binary may
+    /// still work if Gatekeeper decides not to block it.
     #[cfg(target_os = "macos")]
     async fn remove_quarantine_attribute(&self, dir: &PathBuf) {
         let dir_owned = dir.clone();
@@ -337,7 +404,7 @@ impl EngineDownloader {
                 if output.status.success() {
                     info!("Removed quarantine attribute from {:?}", dir_owned);
                 } else {
-                    
+                    // xattr exits non-zero when no quarantine attr exists — not an error
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     if !stderr.contains("No such xattr") && !stderr.trim().is_empty() {
                         tracing::warn!("xattr removal warning for {:?}: {}", dir_owned, stderr.trim());
@@ -350,6 +417,7 @@ impl EngineDownloader {
         }
     }
 
+    /// Save engine metadata to installation directory
     async fn save_engine_metadata(&self, engine_info: &EngineInfo, install_path: &PathBuf) -> Result<()> {
         let metadata_path = install_path.join("metadata.json");
         let metadata_json = serde_json::to_string_pretty(engine_info)?;
@@ -357,6 +425,7 @@ impl EngineDownloader {
         Ok(())
     }
 
+    /// Get appropriate archive filename based on engine info
     fn get_archive_filename(&self, engine_info: &EngineInfo) -> String {
         let url_path = std::path::Path::new(&engine_info.download_url);
         url_path
@@ -366,6 +435,7 @@ impl EngineDownloader {
             .to_string()
     }
 
+    /// Make download request with the primary URL only
     async fn make_download_request(&self, engine_info: &EngineInfo) -> Result<reqwest::Response> {
         let url = &engine_info.download_url;
         info!("Attempting to download from: {}", url);
@@ -384,33 +454,19 @@ impl EngineDownloader {
         }
     }
 
+    /// Get storage path for engines.
     fn get_engine_storage_path(&self) -> Result<PathBuf> {
-        let base_dir = if cfg!(target_os = "windows") {
-            dirs::data_dir()
-                .ok_or_else(|| anyhow::anyhow!("Failed to get APPDATA directory"))?
-                .join("Aud.io")
-                .join("engines")
-        } else if cfg!(target_os = "macos") {
-            dirs::data_dir()
-                .ok_or_else(|| anyhow::anyhow!("Failed to get Library directory"))?
-                .join("Aud.io")
-                .join("engines")
-        } else {
-            dirs::data_dir()
-                .ok_or_else(|| anyhow::anyhow!("Failed to get .local/share directory"))?
-                .join("aud.io")
-                .join("engines")
-        };
-        
-        Ok(base_dir)
+        Ok(crate::utils::PathResolver::engines_dir())
     }
 
+    /// Check if an engine is already downloaded
     pub async fn is_engine_downloaded(&self, engine_id: &str) -> Result<bool> {
         let storage_path = self.get_engine_storage_path()?;
         let engine_path = storage_path.join(engine_id);
         Ok(engine_path.exists())
     }
 
+    /// Get download progress for an engine
     pub async fn get_download_progress(&self, engine_id: &str) -> Result<Option<f64>> {
         if let Some(progress) = self.progress_tracker.get_progress(engine_id).await {
             return Ok(Some(progress.progress_percentage as f64));
@@ -418,14 +474,17 @@ impl EngineDownloader {
         Ok(None)
     }
     
+    /// Get all download progresses
     pub async fn get_all_download_progress(&self) -> Vec<EngineDownloadProgress> {
         self.progress_tracker.get_all_downloads().await
     }
     
+    /// Get reference to progress tracker
     pub fn progress_tracker(&self) -> &Arc<EngineDownloadProgressTracker> {
         &self.progress_tracker
     }
 
+    /// Cancel an ongoing download
     pub async fn cancel_download(&self, engine_id: &str) -> Result<()> {
         if self.progress_tracker.cancel_download(engine_id).await {
             info!("Cancelled download for engine: {}", engine_id);
@@ -435,3 +494,4 @@ impl EngineDownloader {
         Ok(())
     }
 }
+

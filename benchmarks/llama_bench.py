@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 
 LLAMA_BENCH_DEFAULT = (
-    r"C:/Users/pamar/AppData/Roaming/Aud.io/engines/"
+    r"C:/Users/pamar/AppData/Roaming/OfflineIntelligence/engines/"
     r"llama-cuda-windows-x64-b8037/llama-bench.exe"
 )
 MODEL_DEFAULT = (

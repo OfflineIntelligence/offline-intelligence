@@ -1,3 +1,5 @@
+//! Weather tool — Open-Meteo forecast via Nominatim geocoding.
+//! No API key required. Rate limit: 1 req/s per IP (we make 2 sequential calls).
 
 use anyhow::{bail, Result};
 use serde_json::Value;
@@ -6,6 +8,7 @@ use super::Source;
 const NOMINATIM_URL: &str = "https://nominatim.openstreetmap.org/search";
 const OPEN_METEO_URL: &str = "https://api.open-meteo.com/v1/forecast";
 
+/// WMO weather code → human-readable description
 fn wmo_description(code: i64) -> &'static str {
     match code {
         0 => "Clear sky",
@@ -28,11 +31,11 @@ pub async fn get_weather(
     client: &reqwest::Client,
     location: &str,
 ) -> Result<(Vec<Source>, String)> {
-    
+    // Step 1: geocode the location
     let geo: Value = client
         .get(NOMINATIM_URL)
         .query(&[("q", location), ("format", "json"), ("limit", "1")])
-        .header("User-Agent", "Aud.io-ChatInterface/1.0")
+        .header("User-Agent", "OfflineIntelligence/0.1.4")
         .send()
         .await?
         .json()
@@ -55,6 +58,7 @@ pub async fn get_weather(
         .trim()
         .to_string();
 
+    // Step 2: fetch weather
     let weather: Value = client
         .get(OPEN_METEO_URL)
         .query(&[
@@ -78,6 +82,7 @@ pub async fn get_weather(
     let wmo_code = current["weathercode"].as_i64().unwrap_or(0);
     let condition = wmo_description(wmo_code);
 
+    // 3-day forecast
     let daily = &weather["daily"];
     let mut forecast_lines = Vec::new();
     if let (Some(times), Some(max_temps), Some(min_temps), Some(codes)) = (
@@ -126,7 +131,7 @@ pub async fn get_weather(
     );
 
     let sources = vec![Source {
-        id: 0, 
+        id: 0, // will be renumbered by mod.rs
         title: format!("Weather in {}", display_name),
         url,
         snippet,

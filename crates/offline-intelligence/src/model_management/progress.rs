@@ -1,3 +1,7 @@
+//! Download Progress Tracking
+//!
+//! Provides real-time progress tracking for model downloads
+//! with support for multiple concurrent downloads.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -6,6 +10,7 @@ use tokio::sync::{RwLock, watch};
 use tracing::{debug, info};
 use uuid::Uuid;
 
+/// Serialize Duration as seconds (f64) for JSON compatibility with frontend
 mod duration_as_secs_f64 {
     use serde::{self, Deserialize, Deserializer, Serializer};
     use std::time::Duration;
@@ -22,6 +27,7 @@ mod duration_as_secs_f64 {
     }
 }
 
+/// Serialize Option<Duration> as Option<f64> seconds for JSON compatibility
 mod option_duration_as_secs_f64 {
     use serde::{self, Deserialize, Deserializer, Serializer};
     use std::time::Duration;
@@ -41,6 +47,7 @@ mod option_duration_as_secs_f64 {
     }
 }
 
+/// Download progress information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadProgress {
     pub download_id: String,
@@ -50,7 +57,7 @@ pub struct DownloadProgress {
     pub bytes_downloaded: u64,
     pub total_bytes: Option<u64>,
     pub percentage: f32,
-    pub speed_bps: f64, 
+    pub speed_bps: f64, // bytes per second
     #[serde(with = "duration_as_secs_f64")]
     pub elapsed_time: std::time::Duration,
     #[serde(with = "option_duration_as_secs_f64")]
@@ -58,6 +65,7 @@ pub struct DownloadProgress {
     pub error_message: Option<String>,
 }
 
+/// Status of a download
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DownloadStatus {
     Queued,
@@ -79,6 +87,7 @@ impl DownloadStatus {
     }
 }
 
+/// Progress tracker for managing multiple downloads
 pub struct ProgressTracker {
     downloads: Arc<RwLock<HashMap<String, DownloadProgress>>>,
     watchers: Arc<RwLock<HashMap<String, watch::Sender<DownloadProgress>>>>,
@@ -92,6 +101,7 @@ impl ProgressTracker {
         }
     }
 
+    /// Start tracking a new download
     pub async fn start_download(
         &self,
         model_id: String,
@@ -122,6 +132,7 @@ impl ProgressTracker {
         download_id
     }
 
+    /// Update download progress
     pub async fn update_progress(
         &self,
         download_id: &str,
@@ -137,18 +148,20 @@ impl ProgressTracker {
             progress.status = status;
             progress.error_message = error_message;
 
+            // Calculate percentage (guard against division by zero)
             if let Some(total) = progress.total_bytes {
                 if total > 0 {
                     progress.percentage = (bytes_downloaded as f32 / total as f32) * 100.0;
                 }
             }
 
+            // Calculate speed and ETA
             if bytes_downloaded > old_bytes && progress.elapsed_time.as_secs() > 0 {
                 let time_elapsed_secs = progress.elapsed_time.as_secs_f64();
                 progress.speed_bps = bytes_downloaded as f64 / time_elapsed_secs;
 
                 if let Some(total) = progress.total_bytes {
-                    
+                    // Use saturating_sub to prevent overflow if bytes_downloaded > total
                     let remaining_bytes = total.saturating_sub(bytes_downloaded);
                     if progress.speed_bps > 0.0 {
                         let eta_secs = remaining_bytes as f64 / progress.speed_bps;
@@ -157,12 +170,14 @@ impl ProgressTracker {
                 }
             }
 
+            // Notify watchers
             self.notify_watchers(download_id, progress.clone()).await;
             
             debug!("Updated progress for {}: {:.1}%", download_id, progress.percentage);
         }
     }
 
+    /// Update elapsed time for a download
     pub async fn update_elapsed_time(&self, download_id: &str, elapsed: std::time::Duration) {
         let mut downloads = self.downloads.write().await;
         if let Some(progress) = downloads.get_mut(download_id) {
@@ -170,16 +185,19 @@ impl ProgressTracker {
         }
     }
 
+    /// Update total bytes for a download (e.g., when Content-Length is received from HTTP response)
     pub async fn update_total_bytes(&self, download_id: &str, total_bytes: u64) {
         let mut downloads = self.downloads.write().await;
         if let Some(progress) = downloads.get_mut(download_id) {
-            
+            // Only update if we didn't already have a total size or the new size is different
             if progress.total_bytes.is_none() || progress.total_bytes != Some(total_bytes) {
                 progress.total_bytes = Some(total_bytes);
                 
+                // Recalculate percentage if we have bytes downloaded
                 if total_bytes > 0 {
                     progress.percentage = (progress.bytes_downloaded as f32 / total_bytes as f32) * 100.0;
                     
+                    // Recalculate ETA
                     if progress.speed_bps > 0.0 {
                         let remaining_bytes = total_bytes.saturating_sub(progress.bytes_downloaded);
                         let eta_secs = remaining_bytes as f64 / progress.speed_bps;
@@ -187,17 +205,20 @@ impl ProgressTracker {
                     }
                 }
                 
+                // Notify watchers of the update
                 self.notify_watchers(download_id, progress.clone()).await;
                 debug!("Updated total_bytes for {}: {} bytes", download_id, total_bytes);
             }
         }
     }
 
+    /// Get current progress for a download
     pub async fn get_progress(&self, download_id: &str) -> Option<DownloadProgress> {
         let downloads = self.downloads.read().await;
         downloads.get(download_id).cloned()
     }
 
+    /// Get all active downloads
     pub async fn get_active_downloads(&self) -> Vec<DownloadProgress> {
         let downloads = self.downloads.read().await;
         downloads.values()
@@ -206,11 +227,13 @@ impl ProgressTracker {
             .collect()
     }
 
+    /// Get all downloads (active and completed)
     pub async fn get_all_downloads(&self) -> Vec<DownloadProgress> {
         let downloads = self.downloads.read().await;
         downloads.values().cloned().collect()
     }
 
+    /// Subscribe to progress updates for a specific download
     pub async fn subscribe(&self, download_id: &str) -> Option<watch::Receiver<DownloadProgress>> {
         let mut watchers = self.watchers.write().await;
         let (tx, rx) = watch::channel(DownloadProgress {
@@ -231,6 +254,7 @@ impl ProgressTracker {
         Some(rx)
     }
 
+    /// Notify watchers of progress update
     async fn notify_watchers(&self, download_id: &str, progress: DownloadProgress) {
         let watchers = self.watchers.read().await;
         if let Some(tx) = watchers.get(download_id) {
@@ -238,6 +262,7 @@ impl ProgressTracker {
         }
     }
 
+    /// Remove a download from tracking
     pub async fn remove_download(&self, download_id: &str) {
         {
             let mut downloads = self.downloads.write().await;
@@ -250,6 +275,7 @@ impl ProgressTracker {
         info!("Removed download tracking: {}", download_id);
     }
 
+    /// Cancel a download
     pub async fn cancel_download(&self, download_id: &str) -> bool {
         let mut downloads = self.downloads.write().await;
         if let Some(progress) = downloads.get_mut(download_id) {
@@ -265,6 +291,7 @@ impl ProgressTracker {
         }
     }
 
+    /// Get overall download statistics
     pub async fn get_statistics(&self) -> DownloadStatistics {
         let downloads = self.downloads.read().await;
         let mut stats = DownloadStatistics::default();
@@ -293,6 +320,7 @@ impl ProgressTracker {
     }
 }
 
+/// Download statistics
 #[derive(Debug, Default)]
 pub struct DownloadStatistics {
     pub queued: usize,
@@ -339,6 +367,7 @@ mod tests {
             Some(1000)
         ).await;
 
+        // Update progress
         tracker.update_progress(&download_id, 500, DownloadStatus::Downloading, None).await;
         
         let progress = tracker.get_progress(&download_id).await.unwrap();
@@ -359,8 +388,10 @@ mod tests {
 
         let mut receiver = tracker.subscribe(&download_id).await.unwrap();
         
+        // Update progress
         tracker.update_progress(&download_id, 250, DownloadStatus::Downloading, None).await;
         
+        // Check that we received the update
         let progress = receiver.borrow_and_update().clone();
         assert_eq!(progress.bytes_downloaded, 250);
     }

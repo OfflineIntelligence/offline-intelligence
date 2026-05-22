@@ -1,3 +1,8 @@
+//! Storage for the single cumulative pre-clear summary per session.
+//!
+//! There is exactly ONE row per session in `session_summaries`.
+//! On every KV cache clear the row is replaced — never appended — so the summary
+//! always covers the full conversation history from session start to the last clear.
 
 use std::sync::Arc;
 use r2d2::Pool;
@@ -15,6 +20,9 @@ impl SessionSummariesStore {
         Self { pool }
     }
 
+    /// Replace the session's summary with an updated one.
+    /// Uses INSERT OR REPLACE so there is always exactly one row per session.
+    /// `clear_count` is incremented by fetching the current value first.
     pub fn upsert(
         &self,
         session_id: &str,
@@ -24,6 +32,7 @@ impl SessionSummariesStore {
     ) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
 
+        // Read the current clear_count so we can increment it
         let existing_clear_count: i32 = conn
             .query_row(
                 "SELECT clear_count FROM session_summaries WHERE session_id = ?1",
@@ -54,6 +63,7 @@ impl SessionSummariesStore {
         Ok(())
     }
 
+    /// Retrieve the single summary for a session, if one exists.
     pub fn get(&self, session_id: &str) -> anyhow::Result<Option<SessionSummary>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
@@ -83,6 +93,7 @@ impl SessionSummariesStore {
         Ok(None)
     }
 
+    /// Delete the summary for a session (used during full session cleanup).
     pub fn delete_for_session(&self, session_id: &str) -> anyhow::Result<usize> {
         let conn = self.pool.get()?;
         let deleted = conn.execute(

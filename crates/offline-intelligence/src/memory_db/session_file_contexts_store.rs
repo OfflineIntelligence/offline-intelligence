@@ -1,3 +1,8 @@
+//! Session file contexts store.
+//!
+//! Persists references to all files ever attached during a conversation session.
+//! This enables "sticky" file context: once a user attaches a file, the LLM
+//! sees its content for the entire conversation — matching ChatGPT, Gemini, etc.
 
 use anyhow::Result;
 use r2d2::Pool;
@@ -5,20 +10,23 @@ use r2d2_sqlite::SqliteConnectionManager;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+/// A single file attachment reference stored for a session.
 #[derive(Debug, Clone)]
 pub struct SessionFileContext {
     pub id: i64,
     pub session_id: String,
     pub file_name: String,
-    
+    /// "inline" or "local_storage"
     pub source: String,
-    
+    /// OS file path — set when source == "inline"
     pub file_path: Option<String>,
-    
+    /// all_files table ID — set when source == "local_storage"
     pub all_files_id: Option<i64>,
     pub size_bytes: Option<i64>,
 }
 
+/// Lightweight attachment reference passed to the store. Avoids a circular
+/// dependency between `memory_db` and `api::stream_api`.
 pub struct AttachmentRef<'a> {
     pub name: &'a str,
     pub source: &'a str,
@@ -36,6 +44,9 @@ impl SessionFileContextsStore {
         Self { pool }
     }
 
+    /// Store a set of attachment references for a session.
+    /// Deduplicates by (session_id, file_name, source) — avoids duplicate rows
+    /// when the same file is attached multiple times in the same session.
     pub fn store_attachments(
         &self,
         session_id: &str,
@@ -65,6 +76,7 @@ impl SessionFileContextsStore {
         Ok(())
     }
 
+    /// Return all file references stored for a session, ordered by attach time.
     pub fn get_for_session(&self, session_id: &str) -> Result<Vec<SessionFileContext>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
@@ -99,6 +111,7 @@ impl SessionFileContextsStore {
         Ok(results)
     }
 
+    /// Remove all file contexts for a session (e.g., when the conversation is deleted).
     pub fn delete_for_session(&self, session_id: &str) -> Result<usize> {
         let conn = self.pool.get()?;
         let n = conn.execute(

@@ -1,7 +1,7 @@
 -- Migration 006: All files table for unlimited storage with all file formats
 -- Stores user files with no size limit, supports all formats and folder uploads
 -- Accessible via @filename in chat like curated_files
--- Stored in AppData/Aud.io/all_files directory
+-- Stored in AppData/OfflineIntelligence/all_files directory
 
 -- All files table (unlimited storage with folder support)
 CREATE TABLE IF NOT EXISTS all_files (

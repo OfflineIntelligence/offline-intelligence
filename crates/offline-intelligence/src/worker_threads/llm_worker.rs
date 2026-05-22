@@ -1,3 +1,7 @@
+//! LLM worker thread implementation
+//!
+//! Handles LLM inference by proxying requests to the local llama-server process.
+//! This is the 1-hop architecture: shared memory state → HTTP to localhost llama-server.
 
 use std::sync::{Arc, RwLock};
 use futures_util::StreamExt;
@@ -9,6 +13,7 @@ use crate::{
     model_runtime::RuntimeManager,
 };
 
+/// Chat completion request sent to llama-server (OpenAI-compatible format)
 #[derive(Debug, Serialize)]
 struct ChatCompletionRequest {
     model: String,
@@ -16,16 +21,19 @@ struct ChatCompletionRequest {
     max_tokens: u32,
     temperature: f32,
     stream: bool,
-    
+    /// Cache the KV state of this prompt so repeated system-prompt prefixes
+    /// reuse the cached state. Drops warm TTFT from ~50ms to ~5ms.
     cache_prompt: bool,
 }
 
+/// Embedding request sent to llama-server (OpenAI-compatible format)
 #[derive(Debug, Serialize)]
 struct EmbeddingRequest {
     model: String,
     input: Vec<String>,
 }
 
+/// Embedding response from llama-server
 #[derive(Debug, Deserialize)]
 struct EmbeddingResponse {
     data: Vec<EmbeddingData>,
@@ -42,6 +50,7 @@ struct ChatMessage {
     content: String,
 }
 
+/// Non-streaming response from llama-server
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<ChatChoice>,
@@ -52,6 +61,7 @@ struct ChatChoice {
     message: Option<ChatMessage>,
 }
 
+/// Streaming delta chunk from llama-server
 #[derive(Debug, Deserialize)]
 struct StreamChunk {
     choices: Vec<StreamChoice>,
@@ -59,27 +69,18 @@ struct StreamChunk {
 
 #[derive(Debug, Deserialize)]
 struct StreamChoice {
-    delta: Option<ChatDelta>,
     finish_reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-struct ChatDelta {
-    content: Option<String>,
-}
-
 pub struct LLMWorker {
-    backend_url: String,
     http_client: reqwest::Client,
     runtime_manager: RwLock<Option<Arc<RuntimeManager>>>,
 }
 
 impl LLMWorker {
-    
-    pub fn new(shared_state: std::sync::Arc<crate::shared_state::SharedState>) -> Self {
-        let backend_url = shared_state.config.backend_url.clone();
+    /// Create with shared state
+    pub fn new(_shared_state: std::sync::Arc<crate::shared_state::SharedState>) -> Self {
         Self {
-            backend_url,
             http_client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(600))
                 .build()
@@ -88,10 +89,10 @@ impl LLMWorker {
         }
     }
 
+    /// Create with explicit backend URL
     pub fn new_with_backend(backend_url: String) -> Self {
         info!("LLM worker initialized with backend: {}", backend_url);
         Self {
-            backend_url,
             http_client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(600))
                 .build()
@@ -100,6 +101,7 @@ impl LLMWorker {
         }
     }
 
+    /// Set the runtime manager
     pub fn set_runtime_manager(&self, runtime_manager: Arc<RuntimeManager>) {
         if let Ok(mut guard) = self.runtime_manager.write() {
             *guard = Some(runtime_manager);
@@ -109,10 +111,12 @@ impl LLMWorker {
         }
     }
     
+    /// Get the runtime manager if available
     fn get_runtime_manager(&self) -> Option<Arc<RuntimeManager>> {
         self.runtime_manager.read().ok().and_then(|guard| (*guard).clone())
     }
 
+    /// Check if runtime is ready for inference
     pub async fn is_runtime_ready(&self) -> bool {
         let has_runtime_manager = self.runtime_manager.read().is_ok();
         let result = if let Some(ref rm) = self.get_runtime_manager() {
@@ -126,6 +130,10 @@ impl LLMWorker {
         result
     }
 
+    // Override the original methods to use runtime manager when available
+
+
+    /// Convert internal Message format to OpenAI-compatible ChatMessage
     fn to_chat_messages(messages: &[Message]) -> Vec<ChatMessage> {
         messages.iter().map(|m| ChatMessage {
             role: m.role.clone(),
@@ -133,6 +141,7 @@ impl LLMWorker {
         }).collect()
     }
 
+    /// Generate a complete (non-streaming) response from the LLM.
     pub async fn generate_response(
         &self,
         _session_id: String,
@@ -149,25 +158,26 @@ impl LLMWorker {
             cache_prompt: true,
         };
 
+        // Determine the URL to use based on whether runtime manager is available AND ready
         let url = if let Some(ref rm) = self.get_runtime_manager() {
-            
+            // Check if runtime is actually initialized and ready
             if rm.is_ready().await {
                 if let Some(base_url) = rm.get_base_url().await {
                     format!("{}/v1/chat/completions", base_url)
                 } else {
-                    
+                    // Runtime manager exists but no base URL - engine not ready
                     return Err(anyhow::anyhow!(
                         "Model engine is initializing. Please wait a moment and try again, or load a model from the Models panel."
                     ));
                 }
             } else {
-                
+                // Runtime manager exists but not ready
                 return Err(anyhow::anyhow!(
                     "Model engine is not ready yet. Please load a model from the Models panel first."
                 ));
             }
         } else {
-            
+            // No runtime manager set yet - still initializing or no engine installed
             return Err(anyhow::anyhow!(
                 "No model loaded. Please download an engine and load a model from the Models panel."
             ));
@@ -206,6 +216,8 @@ impl LLMWorker {
         Ok(content)
     }
 
+    /// Stream response tokens from the LLM as Server-Sent Events.
+    /// Returns a stream of SSE-formatted strings ready to send to the client.
     pub async fn stream_response(
         &self,
         messages: Vec<Message>,
@@ -223,25 +235,26 @@ impl LLMWorker {
             cache_prompt: true,
         };
 
+        // Determine the URL to use based on whether runtime manager is available AND ready
         let url = if let Some(ref rm) = self.get_runtime_manager() {
-            
+            // Check if runtime is actually initialized and ready
             if rm.is_ready().await {
                 if let Some(base_url) = rm.get_base_url().await {
                     format!("{}/v1/chat/completions", base_url)
                 } else {
-                    
+                    // Runtime manager exists but no base URL - engine not ready
                     return Err(anyhow::anyhow!(
                         "Model engine is initializing. Please wait a moment and try again, or load a model from the Models panel."
                     ));
                 }
             } else {
-                
+                // Runtime manager exists but not ready
                 return Err(anyhow::anyhow!(
                     "Model engine is not ready yet. Please load a model from the Models panel first."
                 ));
             }
         } else {
-            
+            // No runtime manager set yet - still initializing or no engine installed
             return Err(anyhow::anyhow!(
                 "No model loaded. Please download an engine and load a model from the Models panel."
             ));
@@ -323,6 +336,7 @@ impl LLMWorker {
         Ok(sse_stream)
     }
 
+    /// Batch process multiple prompts (non-streaming)
     pub async fn batch_process(
         &self,
         prompts: Vec<(String, Vec<Message>)>,
@@ -344,11 +358,15 @@ impl LLMWorker {
         Ok(responses)
     }
 
+    /// Initialize LLM model (no-op for HTTP proxy mode)
     pub async fn initialize_model(&self, model_path: &str) -> anyhow::Result<()> {
         debug!("LLM worker model init (HTTP proxy mode): {}", model_path);
         Ok(())
     }
 
+    /// Generate embeddings for one or more text inputs via llama-server's /v1/embeddings endpoint.
+    /// This reuses the vectors llama.cpp already computes during inference — no separate model needed.
+    /// Returns a Vec of embedding vectors (one per input string).
     pub async fn generate_embeddings(
         &self,
         texts: Vec<String>,
@@ -364,25 +382,26 @@ impl LLMWorker {
             input: texts,
         };
 
+        // Determine the URL to use based on whether runtime manager is available AND ready
         let url = if let Some(ref rm) = self.get_runtime_manager() {
-            
+            // Check if runtime is actually initialized and ready
             if rm.is_ready().await {
                 if let Some(base_url) = rm.get_base_url().await {
                     format!("{}/v1/embeddings", base_url)
                 } else {
-                    
+                    // Runtime manager exists but no base URL - engine not ready
                     return Err(anyhow::anyhow!(
                         "Model engine is initializing. Please wait a moment and try again."
                     ));
                 }
             } else {
-                
+                // Runtime manager exists but not ready
                 return Err(anyhow::anyhow!(
                     "Model engine is not ready yet. Please load a model from the Models panel first."
                 ));
             }
         } else {
-            
+            // No runtime manager set yet - still initializing or no engine installed
             return Err(anyhow::anyhow!(
                 "No model loaded. Please download an engine and load a model from the Models panel."
             ));
@@ -416,6 +435,7 @@ impl LLMWorker {
         Ok(embeddings)
     }
 
+    /// Generate title for a chat using the LLM
     pub async fn generate_title(
         &self,
         prompt: &str,
@@ -437,25 +457,26 @@ impl LLMWorker {
             cache_prompt: true,
         };
 
+        // Determine the URL to use based on whether runtime manager is available AND ready
         let url = if let Some(ref rm) = self.get_runtime_manager() {
-            
+            // Check if runtime is actually initialized and ready
             if rm.is_ready().await {
                 if let Some(base_url) = rm.get_base_url().await {
                     format!("{}/v1/chat/completions", base_url)
                 } else {
-                    
+                    // Runtime manager exists but no base URL - engine not ready
                     return Err(anyhow::anyhow!(
                         "Model engine is initializing. Please wait a moment and try again, or load a model from the Models panel."
                     ));
                 }
             } else {
-                
+                // Runtime manager exists but not ready
                 return Err(anyhow::anyhow!(
                     "Model engine is not ready yet. Please load a model from the Models panel first."
                 ));
             }
         } else {
-            
+            // No runtime manager set yet - still initializing or no engine installed
             return Err(anyhow::anyhow!(
                 "No model loaded. Please download an engine and load a model from the Models panel."
             ));

@@ -1,3 +1,7 @@
+//! TensorRT Runtime Adapter
+//!
+//! Adapter for TensorRT optimized models (NVIDIA).
+//! Requires NVIDIA GPU and TensorRT runtime.
 
 use async_trait::async_trait;
 use super::runtime_trait::*;
@@ -52,6 +56,7 @@ impl TensorRTRuntime {
         self.server_process = Some(child);
         self.base_url = format!("http://{}:{}", config.host, config.port);
 
+        // Wait for server to be ready (up to 120 seconds) with exponential backoff.
         let _start = std::time::Instant::now();
         let mut delay_ms: u64 = 100;
         let mut last_log_secs: u64 = 0;

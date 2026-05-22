@@ -1,12 +1,15 @@
+//! Builds optimal context from multiple memory sources
 
 use crate::memory::Message;
 use crate::memory_db::StoredMessage;
 use tracing::{info, debug};
 
+/// Builds context from multiple memory sources
 pub struct ContextBuilder {
     config: ContextBuilderConfig,
 }
 
+/// Configuration for context building
 #[derive(Debug, Clone)]
 pub struct ContextBuilderConfig {
     pub max_total_tokens: usize,
@@ -29,7 +32,8 @@ impl Default for ContextBuilderConfig {
 }
 
 impl ContextBuilderConfig {
-    
+    /// Derive the hard token ceiling from the model's context window.
+    /// Mirrors OrchestratorConfig: 75% of CTX_SIZE as the total token cap.
     pub fn from_ctx_size(ctx_size: u32) -> Self {
         Self {
             max_total_tokens: (ctx_size as f32 * 0.75) as usize,
@@ -39,13 +43,14 @@ impl ContextBuilderConfig {
 }
 
 impl ContextBuilder {
-    
+    /// Create a new context builder
     pub fn new(config: ContextBuilderConfig) -> Self {
         Self {
             config,
         }
     }
     
+    /// Build optimal context from Tier 1 (hot cache) and Tier 3 (cold storage)
     pub async fn build_context(
         &mut self,
         current_messages: &[Message],
@@ -56,18 +61,22 @@ impl ContextBuilder {
     ) -> anyhow::Result<Vec<Message>> {
         info!("Building context from {} current messages", current_messages.len());
 
+        // Start with current messages (incorporates tier1 hot cache if available)
         let mut context = self.prepare_context_with_tier1(current_messages, tier1_content);
 
+        // Add cross-session messages if available
         if let Some(ref cross_messages) = cross_session_messages {
             self.add_cross_session_context(&mut context, cross_messages, user_query)
                 .await?;
         }
 
+        // Add specific details from cold storage (Tier 3) if needed
         if let Some(ref full_messages) = tier3_messages {
             self.add_specific_details(&mut context, full_messages, user_query)
                 .await?;
         }
 
+        // Ensure we don't exceed token limits
         self.trim_to_token_limit(&mut context);
 
         debug!("Built context with {} messages", context.len());
@@ -75,6 +84,7 @@ impl ContextBuilder {
         Ok(context)
     }
 
+    /// Add historical messages from other sessions to the current context
     async fn add_cross_session_context(
         &mut self,
         context: &mut Vec<Message>,
@@ -85,23 +95,26 @@ impl ContextBuilder {
             return Ok(());
         }
         
+        // Create a bridging message to inform the model of the source
         let bridge = Message {
             role: "system".to_string(),
             content: "[Context from previous conversations]".to_string(),
         };
         context.insert(0, bridge);
         
+        // Add relevant cross-session messages (limit to 3 to avoid context bloat)
         for message in cross_messages.iter().take(3) {
             let cross_msg = Message {
                 role: message.role.clone(),
                 content: format!("[From earlier: {}]", message.content),
             };
-            context.insert(1, cross_msg); 
+            context.insert(1, cross_msg); // Insert after bridge
         }
         
         Ok(())
     }
     
+    /// Prepare context incorporating Tier 1 content if available
     fn prepare_context_with_tier1(
         &self, 
         current_messages: &[Message], 
@@ -109,12 +122,14 @@ impl ContextBuilder {
     ) -> Vec<Message> {
         let mut context = Vec::new();
         
+        // Always preserve system messages from current
         if self.config.preserve_system_messages {
             for message in current_messages.iter().filter(|m| m.role == "system") {
                 context.push(message.clone());
             }
         }
         
+        // Use Tier 1 content if available, otherwise use recent current messages
         if let Some(tier1_messages) = tier1_content {
             context.extend(tier1_messages);
         } else {
@@ -125,6 +140,7 @@ impl ContextBuilder {
         context
     }
     
+    /// Select recent messages to keep
     fn select_recent_messages(&self, messages: &[Message]) -> Vec<Message> {
         if messages.is_empty() {
             return Vec::new();
@@ -163,6 +179,7 @@ impl ContextBuilder {
                 content: format!("[Earlier detail: {}]", message.content),
             };
             
+            // Insert details before the last user message if possible
             if let Some(pos) = context.iter().rposition(|m| m.role == "user") {
                 context.insert(pos, detail_message);
             } else {
@@ -237,50 +254,12 @@ impl ContextBuilder {
             }
         }
         
+        // Remove from end to preserve order
         for idx in to_remove.iter().rev() {
             context.remove(*idx);
         }
     }
 
-    fn extract_topics(&self, messages: &[Message]) -> Vec<String> {
-        let mut topics = Vec::new();
-        
-        for message in messages.iter().rev().take(5) {
-            let words: Vec<&str> = message.content.split_whitespace().collect();
-            
-            for i in 0..words.len().saturating_sub(2) {
-                let word_lower = words[i].to_lowercase();
-                
-                if word_lower == "about" || word_lower == "regarding" {
-                    let topic = words[i + 1..].iter()
-                        .take(3)
-                        .copied()
-                        .collect::<Vec<&str>>()
-                        .join(" ");
-                    
-                    if !topic.is_empty() { 
-                        topics.push(topic); 
-                    }
-                }
-                
-                if ["what", "how", "why", "when", "where", "who", "which"].contains(&word_lower.as_str()) {
-                    let topic = words[i + 1..].iter()
-                        .take(4)
-                        .copied()
-                        .collect::<Vec<&str>>()
-                        .join(" ");
-                    
-                    if !topic.is_empty() { 
-                        topics.push(topic); 
-                    }
-                }
-            }
-        }
-        
-        topics.dedup();
-        topics.truncate(3);
-        topics
-    }
 }
 
 impl Clone for ContextBuilder {

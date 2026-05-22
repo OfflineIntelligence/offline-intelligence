@@ -1,3 +1,7 @@
+//! Model Registry
+//!
+//! Manages model metadata, tracks installed models, and provides
+//! querying capabilities for available models.
 
 use super::storage::{ModelStorage, ModelMetadata};
 use anyhow::{Context, Result};
@@ -9,23 +13,26 @@ use tracing::{debug, info, warn};
 use super::recommendation::{HardwareProfile, ModelRecommender};
 use reqwest::Client;
 
+/// Status of a model in the registry
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ModelStatus {
-    
+    /// Model is available locally
     Installed,
-    
+    /// Model is being downloaded
     Downloading,
-    
+    /// Model is available for download
     Available,
-    
+    /// Model had an error during download/installation
     Error(String),
 }
 
+/// Public pricing information for an API model (e.g., OpenRouter).
+/// Both fields are decimal strings; "0" means the model is free.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPricing {
-    
+    /// Cost per prompt token — "0" means free
     pub prompt: String,
-    
+    /// Cost per completion token — "0" means free
     pub completion: String,
 }
 
@@ -36,6 +43,7 @@ impl ModelPricing {
     }
 }
 
+/// Information about a model in the registry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub id: String,
@@ -46,105 +54,47 @@ pub struct ModelInfo {
     pub size_bytes: u64,
     pub format: String,
     pub download_source: Option<String>,
-    
+    /// Specific filename to download (for HuggingFace models with non-standard naming)
     #[serde(default)]
     pub filename: Option<String>,
     pub installed_version: Option<String>,
     pub last_updated: Option<chrono::DateTime<chrono::Utc>>,
     pub tags: Vec<String>,
-    pub compatibility_score: Option<f32>, 
-    
+    pub compatibility_score: Option<f32>, // 0.0 to 1.0 based on hardware match
+    /// Parameter count string (e.g., "7B", "70B", "671B")
     #[serde(default)]
     pub parameters: Option<String>,
-    
+    /// Context length in tokens
     #[serde(default)]
     pub context_length: Option<u64>,
-    
+    /// Provider name (for OpenRouter models)
     #[serde(default)]
     pub provider: Option<String>,
-    
+    /// Total number of shards for sharded models (None for single-file models)
     #[serde(default)]
     pub total_shards: Option<u32>,
-    
+    /// List of all shard filenames for sharded models
     #[serde(default)]
     pub shard_filenames: Vec<String>,
-    
+    /// Download count (for HuggingFace models)
     #[serde(default)]
     pub downloads: u64,
-    
+    /// Whether this HuggingFace model requires access approval from the repo owner
     #[serde(default)]
     pub is_gated: bool,
-    
+    /// Pricing info for OpenRouter API models (None for offline/HF models)
     #[serde(default)]
     pub pricing: Option<ModelPricing>,
 }
 
+/// Model registry manager
 pub struct ModelRegistry {
     storage: Arc<ModelStorage>,
     models: HashMap<String, ModelInfo>,
-    known_sources: Vec<ModelSource>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelSource {
-    pub name: String,
-    pub url: String,
-    pub api_type: SourceType,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SourceType {
-    HuggingFace,
-    OpenRouter,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterModelsResponse {
-    data: Vec<OpenRouterModel>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct OpenRouterPricing {
-    
-    #[serde(default)]
-    prompt: String,
-    
-    #[serde(default)]
-    completion: String,
-}
-
-impl OpenRouterPricing {
-    
-    fn is_free(&self) -> bool {
-        (self.prompt == "0" || self.prompt.is_empty())
-            && (self.completion == "0" || self.completion.is_empty())
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterModel {
-    id: String,
-    name: Option<String>,
-    description: Option<String>,
-    context_length: Option<u64>,
-    #[serde(default)]
-    architecture: Option<OpenRouterArchitecture>,
-    
-    #[serde(default)]
-    pricing: Option<OpenRouterPricing>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct OpenRouterArchitecture {
-    #[serde(default)]
-    modality: Option<String>,
-    #[serde(default)]
-    tokenizer: Option<String>,
-    
-    #[serde(default)]
-    instruct_type: Option<String>,
-}
-
+/// Hugging Face API model response
 #[derive(Debug, Deserialize)]
 struct HuggingFaceModel {
     id: String,
@@ -152,7 +102,7 @@ struct HuggingFaceModel {
     model_id: Option<String>,
     author: Option<String>,
     downloads: Option<u64>,
-    
+    /// Gated status: false, "auto", or "manual". Gated models require user approval.
     #[serde(default)]
     gated: Option<serde_json::Value>,
     #[serde(default)]
@@ -173,167 +123,26 @@ impl ModelRegistry {
         let mut registry = Self {
             storage,
             models: HashMap::new(),
-            known_sources: vec![
-                ModelSource {
-                    name: "Hugging Face".to_string(),
-                    url: "https://huggingface.co".to_string(),
-                    api_type: SourceType::HuggingFace,
-                },
-                ModelSource {
-                    name: "OpenRouter".to_string(),
-                    url: "https://openrouter.ai".to_string(),
-                    api_type: SourceType::OpenRouter,
-                },
-            ],
         };
 
+        // Load existing registry data
         registry.load_registry()?;
 
+        // Populate default catalog (only adds models not already present)
         registry.populate_default_catalog();
 
         Ok(registry)
     }
 
-    pub async fn refresh_openrouter_catalog_from_api(
-        &mut self,
-        api_key: &str,
-    ) -> Result<()> {
-        let client = Client::new();
-        let resp = client
-            .get("https://openrouter.ai/api/v1/models")
-            .header("Authorization", format!("Bearer {}", api_key))
-            .send()
-            .await
-            .context("Failed to call OpenRouter /models API")?;
-
-        let resp = resp.error_for_status().context("OpenRouter /models returned error status")?;
-        let body: OpenRouterModelsResponse = resp
-            .json()
-            .await
-            .context("Failed to parse OpenRouter models response")?;
-
-        let mut openrouter_ids: HashSet<String> = HashSet::new();
-
-        for m in body.data.into_iter() {
-            let plain_id = m.id.clone();
-
-            let registry_id = format!("openrouter:{}", plain_id);
-            openrouter_ids.insert(registry_id.clone());
-
-            let is_free = m.pricing.as_ref().map_or(true, |p| p.is_free())
-                || plain_id.ends_with(":free");
-
-            let provider = plain_id
-                .split('/')
-                .next()
-                .unwrap_or("")
-                .to_lowercase();
-
-            let mut tags = vec![
-                "api".to_string(),
-                "online".to_string(),
-                "cloud".to_string(),
-            ];
-            if is_free {
-                tags.push("free".to_string());
-            } else {
-                tags.push("paid".to_string());
-            }
-            if !provider.is_empty() {
-                tags.push(format!("provider:{}", provider));
-            }
-
-            if let Some(ctx) = m.context_length {
-                if ctx >= 128_000 {
-                    tags.push("context:xl".to_string());
-                } else if ctx >= 32_000 {
-                    tags.push("context:large".to_string());
-                } else if ctx >= 8_000 {
-                    tags.push("context:medium".to_string());
-                } else {
-                    tags.push("context:small".to_string());
-                }
-            }
-
-            let parameters = {
-                let name_str = m.name.as_deref().unwrap_or(&plain_id);
-                
-                let re = regex::Regex::new(r"(\d+(?:\.\d+)?(?:x\d+)?[BMK])").ok();
-                re.and_then(|r| r.find(name_str).map(|m| m.as_str().to_string()))
-            };
-
-            let provider_display = if !provider.is_empty() {
-                let mut chars = provider.chars();
-                match chars.next() {
-                    Some(c) => Some(c.to_uppercase().collect::<String>() + chars.as_str()),
-                    None => None,
-                }
-            } else {
-                None
-            };
-
-            let pricing = m.pricing.as_ref().map(|p| ModelPricing {
-                prompt: p.prompt.clone(),
-                completion: p.completion.clone(),
-            });
-
-            let model_info = ModelInfo {
-                id: registry_id.clone(),
-                name: m.name.clone().unwrap_or_else(|| plain_id.clone()),
-                description: m.description.clone(),
-                author: provider_display.clone(),
-                status: ModelStatus::Available,
-                size_bytes: 0,
-                format: "api".to_string(),
-                download_source: Some("openrouter".to_string()),
-                filename: None,
-                installed_version: None,
-                last_updated: None,
-                tags,
-                compatibility_score: None,
-                parameters,
-                context_length: m.context_length,
-                provider: provider_display,
-                total_shards: None,
-                shard_filenames: vec![],
-                downloads: 0,
-                is_gated: false,
-                pricing,
-            };
-
-            self.models
-                .entry(registry_id.clone())
-                .and_modify(|existing| {
-                    existing.name = model_info.name.clone();
-                    existing.description = model_info.description.clone();
-                    existing.status = model_info.status.clone();
-                    existing.format = model_info.format.clone();
-                    existing.download_source = model_info.download_source.clone();
-                    existing.tags = model_info.tags.clone();
-                    existing.pricing = model_info.pricing.clone();
-                })
-                .or_insert(model_info);
-        }
-
-        self.models.retain(|id, model| {
-            if model.download_source.as_deref() == Some("openrouter") {
-                openrouter_ids.contains(id)
-            } else {
-                true
-            }
-        });
-
-        info!("Refreshed OpenRouter catalog, now tracking {} models", openrouter_ids.len());
-
-        Ok(())
-    }
-
+    /// Refresh the Hugging Face GGUF/GGML model catalog from the HF Hub API.
+    /// Fetches top models by downloads and extracts available quantized files.
     pub async fn refresh_huggingface_catalog_from_api(
         &mut self,
         limit: usize,
     ) -> Result<()> {
         let client = Client::new();
 
+        // Fetch GGUF models sorted by downloads
         let url = format!(
             "https://huggingface.co/api/models?filter=gguf&sort=downloads&direction=-1&limit={}&full=true",
             limit
@@ -341,7 +150,7 @@ impl ModelRegistry {
 
         let resp = client
             .get(&url)
-            .header("User-Agent", "Aud.io-Desktop/1.0")
+            .header("User-Agent", "OfflineIntelligence/0.1.4")
             .send()
             .await
             .context("Failed to call Hugging Face models API")?;
@@ -360,11 +169,15 @@ impl ModelRegistry {
         for m in models.into_iter() {
             let repo_id = m.model_id.as_ref().unwrap_or(&m.id).clone();
 
+            // Flag gated models — they require HuggingFace access approval.
+            // We include them in the catalog so the UI can show a
+            // "Request Access" button instead of a direct download button.
             let is_gated = match &m.gated {
                 Some(serde_json::Value::Bool(false)) | None => false,
-                _ => true, 
+                _ => true, // "auto", "manual", true all count as gated
             };
 
+            // Find GGUF files in siblings
             let gguf_files: Vec<&HuggingFaceSibling> = m
                 .siblings
                 .iter()
@@ -377,12 +190,14 @@ impl ModelRegistry {
                 continue;
             }
 
+            // Check if this is a sharded model by looking for shard patterns
             let mut sharded_model_info = None;
             for file in &gguf_files {
                 if let Some(total_shards) = self.detect_shard_pattern_internal(&file.rfilename) {
-                    
+                    // This is a sharded model, collect all shards
                     let all_shards = self.collect_shards_internal(&gguf_files, total_shards);
                     
+                    // Calculate total size
                     let total_size = all_shards.iter()
                         .map(|s| s.size.unwrap_or(0))
                         .sum();
@@ -390,6 +205,7 @@ impl ModelRegistry {
                     let registry_id = repo_id.clone();
                     hf_ids.insert(registry_id.clone());
 
+                    // Determine format from first shard
                     let format = if file.rfilename.ends_with(".gguf") {
                         "gguf"
                     } else {
@@ -397,6 +213,7 @@ impl ModelRegistry {
                     }
                     .to_string();
 
+                    // Build tags from HF tags + our own
                     let mut tags: Vec<String> = m
                         .tags
                         .iter()
@@ -406,8 +223,9 @@ impl ModelRegistry {
                         .collect();
                     tags.push("offline".to_string());
                     tags.push(format.clone());
-                    tags.push("sharded".to_string()); 
+                    tags.push("sharded".to_string()); // Add sharded tag
 
+                    // Derive a friendly name from repo_id
                     let name = repo_id
                         .split('/')
                         .last()
@@ -415,6 +233,7 @@ impl ModelRegistry {
                         .replace("-GGUF", "")
                         .replace("-gguf", "");
 
+                    // Extract parameter count from name
                     let parameters = {
                         let name_str = &name;
                         let re = regex::Regex::new(r"(\d+(?:\.\d+)?(?:x\d+)?[BMK])").ok();
@@ -430,7 +249,7 @@ impl ModelRegistry {
                         size_bytes: total_size,
                         format,
                         download_source: Some("huggingface".to_string()),
-                        filename: Some(file.rfilename.clone()), 
+                        filename: Some(file.rfilename.clone()), // Store the first shard as the primary filename
                         installed_version: None,
                         last_updated: None,
                         tags,
@@ -444,14 +263,15 @@ impl ModelRegistry {
                         is_gated,
                         pricing: None,
                     });
-                    break; 
+                    break; // Found sharded model, no need to check other files
                 }
             }
 
+            // If we found a sharded model, use that info; otherwise use the preferred single file
             let model_info = if let Some(sharded_info) = sharded_model_info {
                 sharded_info
             } else {
-                
+                // Prefer Q4_K_M, Q5_K_M, Q6_K, Q8_0, IQ_X_X quantizations (good balance of size/quality)
                 let preferred_file = gguf_files
                     .iter()
                     .find(|f| f.rfilename.contains("Q4_K_M"))
@@ -479,6 +299,7 @@ impl ModelRegistry {
                 let registry_id = repo_id.clone();
                 hf_ids.insert(registry_id.clone());
 
+                // Determine format from filename
                 let format = if file.rfilename.ends_with(".gguf") {
                     "gguf"
                 } else {
@@ -486,6 +307,7 @@ impl ModelRegistry {
                 }
                 .to_string();
 
+                // Build tags from HF tags + our own
                 let mut tags: Vec<String> = m
                     .tags
                     .iter()
@@ -496,6 +318,7 @@ impl ModelRegistry {
                 tags.push("offline".to_string());
                 tags.push(format.clone());
 
+                // Derive a friendly name from repo_id
                 let name = repo_id
                     .split('/')
                     .last()
@@ -503,6 +326,7 @@ impl ModelRegistry {
                     .replace("-GGUF", "")
                     .replace("-gguf", "");
 
+                // Extract parameter count from name
                 let parameters = {
                     let name_str = &name;
                     let re = regex::Regex::new(r"(\d+(?:\.\d+)?(?:x\d+)?[BMK])").ok();
@@ -534,10 +358,11 @@ impl ModelRegistry {
                 }
             };
 
+            // Insert or update
             self.models
                 .entry(model_info.id.clone())
                 .and_modify(|existing| {
-                    
+                    // Don't overwrite installed models
                     if existing.status != ModelStatus::Installed {
                         existing.name = model_info.name.clone();
                         existing.description = model_info.description.clone();
@@ -563,24 +388,27 @@ impl ModelRegistry {
         Ok(())
     }
 
+    /// Recompute compatibility scores for all known local models based on
+    /// the current hardware profile and user preferences. This is used by
+    /// the model manager to support "Best Match" sorting in the UI.
     pub fn update_compatibility_scores(
         &mut self,
         recommender: &ModelRecommender,
         hardware: &HardwareProfile,
     ) {
         for model in self.models.values_mut() {
-            
-            let is_offline_format = model.format.eq_ignore_ascii_case("gguf")
+            // Only score local models (GGUF/GGML) — other formats are not constrained by hardware.
+            let is_local_format = model.format.eq_ignore_ascii_case("gguf")
                 || model.format.eq_ignore_ascii_case("ggml");
-            let is_api_model = model.download_source.as_deref() == Some("openrouter");
 
-            if is_offline_format && !is_api_model {
+            if is_local_format {
                 let score = recommender.score_model_compatibility(model, hardware);
                 model.compatibility_score = Some(score);
             }
         }
     }
 
+    /// Load registry data from persistent storage
     fn load_registry(&mut self) -> Result<()> {
         let registry_path = self.storage.location.registry_dir.join("registry.json");
         if registry_path.exists() {
@@ -607,6 +435,7 @@ impl ModelRegistry {
         Ok(())
     }
 
+    /// Scan local storage for existing models and populate registry
     pub async fn scan_storage(&mut self) -> Result<()> {
         let model_ids = self.storage.list_models()?;
         
@@ -621,11 +450,11 @@ impl ModelRegistry {
                     size_bytes: metadata.size_bytes,
                     format: metadata.format,
                     download_source: Some(metadata.download_source),
-                    filename: None, 
-                    installed_version: None, 
+                    filename: None, // Already downloaded, filename not needed
+                    installed_version: None, // Version extracted from model metadata
                     last_updated: Some(metadata.download_date),
                     tags: metadata.tags,
-                    compatibility_score: None, 
+                    compatibility_score: None, // Will be calculated on demand
                     parameters: None,
                     context_length: None,
                     provider: None,
@@ -644,6 +473,7 @@ impl ModelRegistry {
         Ok(())
     }
 
+    /// Load metadata for a specific model
     async fn load_model_metadata(&self, model_id: &str) -> Result<Option<ModelMetadata>> {
         let metadata_path = self.storage.metadata_path(model_id);
         
@@ -656,6 +486,7 @@ impl ModelRegistry {
         }
     }
 
+    /// Update model status based on file existence
     pub async fn update_model_status_from_storage(&mut self, model_id: &str) -> Result<()> {
         if let Some(model_info) = self.models.get_mut(model_id) {
             let model_exists = self.storage.model_exists(model_id);
@@ -663,7 +494,7 @@ impl ModelRegistry {
             if model_exists {
                 model_info.status = ModelStatus::Installed;
             } else {
-                
+                // If it was installed but no longer exists, mark as available (downloadable)
                 if matches!(model_info.status, ModelStatus::Installed) {
                     model_info.status = ModelStatus::Available;
                 }
@@ -673,6 +504,7 @@ impl ModelRegistry {
         Ok(())
     }
 
+    /// Update all model statuses based on file existence in storage
     pub async fn update_all_model_statuses_from_storage(&mut self) -> Result<()> {
         let model_ids: Vec<String> = self.models.keys().cloned().collect();
         
@@ -683,16 +515,19 @@ impl ModelRegistry {
         Ok(())
     }
 
+    /// Get the path of an installed model by ID
     pub fn get_installed_model_path(&self, model_id: &str) -> Option<std::path::PathBuf> {
         let model_info = self.models.get(model_id)?;
         if model_info.status != ModelStatus::Installed {
             return None;
         }
         
+        // Try to get the filename from model_info, otherwise look for any model file in the directory
         if let Some(filename) = &model_info.filename {
             return Some(self.storage.model_path(model_id, filename));
         }
         
+        // Look for any model file in the directory
         let temp_path = self.storage.model_path(model_id, "dummy");
         let model_dir = match temp_path.parent() {
             Some(dir) => dir.to_path_buf(),
@@ -719,6 +554,7 @@ impl ModelRegistry {
         None
     }
     
+    /// Get the complete model metadata including runtime binaries information
     pub async fn get_model_metadata(&self, model_id: &str) -> Option<ModelMetadata> {
         match self.load_model_metadata(model_id).await {
             Ok(Some(metadata)) => Some(metadata),
@@ -726,28 +562,34 @@ impl ModelRegistry {
         }
     }
 
+    /// Add a model to the registry
     pub fn add_model(&mut self, model_info: ModelInfo) {
         self.models.insert(model_info.id.clone(), model_info);
     }
 
+    /// Get model information by ID
     pub fn get_model(&self, model_id: &str) -> Option<&ModelInfo> {
         self.models.get(model_id)
     }
 
+    /// Get mutable reference to model information
     pub fn get_model_mut(&mut self, model_id: &str) -> Option<&mut ModelInfo> {
         self.models.get_mut(model_id)
     }
 
+    /// List all models in registry
     pub fn list_models(&self) -> Vec<&ModelInfo> {
         self.models.values().collect()
     }
 
+    /// List models by status
     pub fn list_models_by_status(&self, status: ModelStatus) -> Vec<&ModelInfo> {
         self.models.values()
             .filter(|model| model.status == status)
             .collect()
     }
 
+    /// Search models by name or tags
     pub fn search_models(&self, query: &str) -> Vec<&ModelInfo> {
         let query_lower = query.to_lowercase();
         self.models.values()
@@ -759,6 +601,7 @@ impl ModelRegistry {
             .collect()
     }
 
+    /// Get models sorted by compatibility score for current hardware
     pub fn get_recommended_models(&self, max_results: usize) -> Vec<&ModelInfo> {
         let mut models: Vec<_> = self.models.values().collect();
         models.sort_by(|a, b| {
@@ -770,16 +613,19 @@ impl ModelRegistry {
         models
     }
 
+    /// Update model status
     pub fn update_model_status(&mut self, model_id: &str, status: ModelStatus) {
         if let Some(model) = self.models.get_mut(model_id) {
             model.status = status;
         }
     }
 
+    /// Remove a model from registry
     pub fn remove_model(&mut self, model_id: &str) -> bool {
         self.models.remove(model_id).is_some()
     }
 
+    /// Get registry statistics
     pub fn get_statistics(&self) -> RegistryStats {
         let mut stats = RegistryStats::default();
         
@@ -796,6 +642,7 @@ impl ModelRegistry {
         stats
     }
 
+    /// Get models by category/tags
     pub fn get_models_by_category(&self, category: &str) -> Vec<&ModelInfo> {
         self.models.values()
             .filter(|model| {
@@ -806,25 +653,28 @@ impl ModelRegistry {
             .collect()
     }
 
+    /// Get trending models (recently added or popular tags)
     pub fn get_trending_models(&self, limit: usize) -> Vec<&ModelInfo> {
         let mut models: Vec<&ModelInfo> = self.models.values()
             .filter(|model| {
-                
+                // Filter for popular models (based on certain tags)
                 model.tags.iter().any(|tag| 
                     tag == "popular" || tag == "trending" || tag == "featured"
                 )
             })
             .collect();
         
+        // Sort by some criteria (e.g., size as proxy for popularity, or by name)
         models.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
         models.truncate(limit);
         models
     }
 
+    /// Get models by task type (e.g., "chat", "coding", "text-generation")
     pub fn get_models_by_task(&self, task: &str) -> Vec<&ModelInfo> {
         self.models.values()
             .filter(|model| {
-                
+                // Look in name, description and tags for the task
                 model.name.to_lowercase().contains(&task.to_lowercase()) ||
                 model.description.as_ref().map_or(false, |desc| 
                     desc.to_lowercase().contains(&task.to_lowercase())) ||
@@ -834,6 +684,7 @@ impl ModelRegistry {
             .collect()
     }
 
+    /// Save registry to persistent storage
     pub async fn save_registry(&self) -> Result<()> {
         let registry_path = self.storage.location.registry_dir.join("registry.json");
         let content = serde_json::to_string_pretty(&self.models)
@@ -844,15 +695,17 @@ impl ModelRegistry {
         Ok(())
     }
 
+    /// Populate the registry with well-known models from all sources.
+    /// Only adds models that are not already in the registry.
+    /// Also removes stale models that are no longer available.
     pub fn populate_default_catalog(&mut self) {
         let catalog = Self::get_default_catalog();
-        let catalog_ids: std::collections::HashSet<String> = catalog.iter().map(|m| m.id.clone()).collect();
 
+        // Remove stale models: Ollama models (functionality removed) and any other obsolete models
         let stale_ids: Vec<String> = self.models.iter()
-            .filter(|(id, m)| {
-                
+            .filter(|(_, m)| {
+                // Remove all Ollama models (functionality removed)
                 m.download_source.as_deref() == Some("ollama")
-                
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -875,134 +728,15 @@ impl ModelRegistry {
         }
     }
 
+    /// Returns the built-in catalog of well-known models
+    /// Currently returns an empty vector as models are loaded dynamically from APIs
     fn get_default_catalog() -> Vec<ModelInfo> {
         vec![]
     }
 
-    pub async fn populate_default_openrouter_models(&mut self) {
-        if let Err(e) = self.fetch_public_openrouter_models().await {
-            warn!("Failed to fetch public OpenRouter models: {}", e);
-            
-        }
-    }
-
-    async fn fetch_public_openrouter_models(&mut self) -> Result<()> {
-        let client = Client::new();
-        let resp = client
-            .get("https://openrouter.ai/api/v1/models")
-            .send()
-            .await
-            .context("Failed to call OpenRouter public /models API")?;
-
-        let resp = resp.error_for_status().context("OpenRouter public /models returned error status")?;
-        let body: OpenRouterModelsResponse = resp
-            .json()
-            .await
-            .context("Failed to parse OpenRouter public models response")?;
-
-        let mut added = 0;
-
-        for m in body.data.into_iter() {
-            let plain_id = m.id.clone();
-            
-            if self.is_invalid_openrouter_model(&plain_id) {
-                debug!("Skipping invalid model: {}", plain_id);
-                continue;
-            }
-            
-            let registry_id = format!("openrouter:{}", plain_id);
-
-            let provider = plain_id
-                .split('/')
-                .next()
-                .unwrap_or("")
-                .to_lowercase();
-
-            let mut tags = vec![
-                "api".to_string(),
-                "online".to_string(),
-                "cloud".to_string(),
-            ];
-            if !provider.is_empty() {
-                tags.push(format!("provider:{}", provider));
-            }
-
-            if let Some(ctx) = m.context_length {
-                if ctx >= 128_000 {
-                    tags.push("context:xl".to_string());
-                } else if ctx >= 32_000 {
-                    tags.push("context:large".to_string());
-                } else if ctx >= 8_000 {
-                    tags.push("context:medium".to_string());
-                } else {
-                    tags.push("context:small".to_string());
-                }
-            }
-
-            let parameters = {
-                let name_str = m.name.as_deref().unwrap_or(&plain_id);
-                
-                let re = regex::Regex::new(r"(\d+(?:\.\d+)?(?:x\d+)?[BMK])").ok();
-                re.and_then(|r| r.find(name_str).map(|m| m.as_str().to_string()))
-            };
-
-            let provider_display = if !provider.is_empty() {
-                let mut chars = provider.chars();
-                match chars.next() {
-                    Some(c) => Some(c.to_uppercase().collect::<String>() + chars.as_str()),
-                    None => None,
-                }
-            } else {
-                None
-            };
-
-            let is_free = m.pricing.as_ref().map_or(true, |p| p.is_free())
-                || plain_id.ends_with(":free");
-            if is_free {
-                tags.push("free".to_string());
-            } else {
-                tags.push("paid".to_string());
-            }
-
-            let pricing = m.pricing.as_ref().map(|p| ModelPricing {
-                prompt: p.prompt.clone(),
-                completion: p.completion.clone(),
-            });
-
-            let model_info = ModelInfo {
-                id: registry_id.clone(),
-                name: m.name.clone().unwrap_or_else(|| plain_id.clone()),
-                description: m.description.clone(),
-                author: provider_display.clone(),
-                status: ModelStatus::Available,
-                size_bytes: 0,
-                format: "api".to_string(),
-                download_source: Some("openrouter".to_string()),
-                filename: None,
-                installed_version: None,
-                last_updated: Some(chrono::Utc::now()),
-                tags,
-                compatibility_score: None,
-                parameters,
-                context_length: m.context_length,
-                provider: provider_display,
-                total_shards: None,
-                shard_filenames: vec![],
-                downloads: 0,
-                is_gated: false,
-                pricing,
-            };
-
-            self.models.insert(registry_id, model_info);
-            added += 1;
-        }
-
-        info!("Fetched {} public OpenRouter models from API", added);
-        Ok(())
-    }
-
+    /// Detect if the filename follows a shard pattern (e.g., model-00001-of-00003.gguf)
     fn detect_shard_pattern_internal(&self, filename: &str) -> Option<u32> {
-        
+        // Pattern: some-name-00001-of-00003.ext
         let re = regex::Regex::new(r".*-(\d{5})-of-(\d{5})\.[^.]+$").ok()?;
         if let Some(caps) = re.captures(filename) {
             if let Some(total_str) = caps.get(2) {
@@ -1014,18 +748,21 @@ impl ModelRegistry {
         None
     }
 
+    /// Collect all shards for a given total_shards number
     fn collect_shards_internal<'a>(&self, gguf_files: &[&'a HuggingFaceSibling], total_shards: u32) -> Vec<&'a HuggingFaceSibling> {
         let mut shards = Vec::new();
         
+        // Find the pattern from one of the shard files
         if let Some(first_file) = gguf_files.iter().find(|f| self.detect_shard_pattern_internal(&f.rfilename).is_some()) {
-            
+            // Extract the pattern from the first file to find other shards
             if let Some(caps) = regex::Regex::new(r"(.*-)(\d{5})(-of-\d{5}\.[^.]+)$")
                 .ok()
                 .and_then(|re| re.captures(&first_file.rfilename)) {
                 
-                let prefix = caps[1].to_string();  
-                let suffix = caps[3].to_string();  
+                let prefix = caps[1].to_string();  // Owned string to avoid lifetime issues
+                let suffix = caps[3].to_string();  // Owned string to avoid lifetime issues
                 
+                // Collect all expected shard files
                 for i in 1..=total_shards {
                     let expected_filename = format!("{}{:05}{}", prefix, i, suffix);
                     if let Some(file) = gguf_files.iter().find(|f| f.rfilename == expected_filename) {
@@ -1038,17 +775,9 @@ impl ModelRegistry {
         shards
     }
 
-    fn is_invalid_openrouter_model(&self, model_id: &str) -> bool {
-        
-        model_id == "google/gemini-pro" || 
-        model_id == "google/palm-2-chat-bison" ||
-        model_id.starts_with("google/palm") ||
-        model_id.starts_with("google/gemini-pro") ||
-        
-        false
-    }
 }
 
+/// Registry statistics
 #[derive(Debug, Default)]
 pub struct RegistryStats {
     pub installed_count: usize,

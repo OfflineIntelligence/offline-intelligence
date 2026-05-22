@@ -1,9 +1,18 @@
+//! Intent detection — maps user message text to tool intents via keyword/regex patterns.
+//!
+//! Detection order:
+//!   1. Weather          — "weather in X", "temperature in X"
+//!   2. Currency (amount) — "100 USD to EUR"
+//!   3. Currency (rate)  — "USD to INR", "dollar to rupee" (no amount, defaults to 1.0)
+//!   4. Crypto           — "bitcoin price", "ETH to USD"
+//!
+//! General knowledge questions go directly to the LLM — no tool round-trip needed.
 
 use regex::Regex;
 use super::ToolIntent;
 
 lazy_static::lazy_static! {
-    
+    // ── Weather ───────────────────────────────────────────────────────────────
     static ref WEATHER_RE: Regex = Regex::new(
         r"(?i)\b(?:weather|forecast|temperature|how(?:'s| is) it (?:in|at)|is it (?:raining|sunny|cold|hot|snowing)\s+in|current (?:weather|temp(?:erature)?))\b[^.?!]*?\bin\s+([\w\s,]+?)(?:\?|$|\.|\n|now|today|tomorrow|right now)"
     ).unwrap();
@@ -12,14 +21,17 @@ lazy_static::lazy_static! {
         r"(?i)(?:weather|forecast|temperature)\s+(?:in|at|for)\s+([\w\s,]+?)(?:\?|$|\.|\n)"
     ).unwrap();
 
+    // ── Currency — with explicit amount ──────────────────────────────────────
     static ref CURRENCY_AMOUNT_RE: Regex = Regex::new(
         r"(?i)\b(?:convert|exchange|how (?:much|many)|price of)?\s*(\d+(?:\.\d+)?)\s*([A-Za-z]{2,10})\s+(?:to|in|into)\s+([A-Za-z]{2,10})\b"
     ).unwrap();
 
+    // ── Currency — rate / pair without amount ─────────────────────────────────
     static ref CURRENCY_PAIR_RE: Regex = Regex::new(
         r"(?i)([A-Za-z]{2,10})\s+(?:to|in|into|vs\.?|against)\s+([A-Za-z]{2,10})"
     ).unwrap();
 
+    // ── Crypto price ──────────────────────────────────────────────────────────
     static ref CRYPTO_RE: Regex = Regex::new(
         r"(?i)\b(?:price of|value of|how (?:much|many) (?:is|are))?\s*(bitcoin|btc|ethereum|eth|solana|sol|cardano|ada|dogecoin|doge|ripple|xrp|litecoin|ltc|bnb|matic|polygon|avalanche|avax|chainlink|link|polkadot|dot)\s+(?:price|value|cost|worth|in|to)?\s*(?:usd|eur|gbp|jpy|cad|aud)?\b"
     ).unwrap();
@@ -29,6 +41,7 @@ lazy_static::lazy_static! {
     ).unwrap();
 }
 
+/// Map a coin name/ticker to CoinGecko ID.
 fn to_coingecko_id(name: &str) -> &'static str {
     match name.to_lowercase().as_str() {
         "bitcoin" | "btc" => "bitcoin",
@@ -47,6 +60,7 @@ fn to_coingecko_id(name: &str) -> &'static str {
     }
 }
 
+/// Returns true if the string is a known crypto name/ticker.
 fn is_crypto_name(s: &str) -> bool {
     matches!(
         s.to_lowercase().as_str(),
@@ -57,6 +71,7 @@ fn is_crypto_name(s: &str) -> bool {
     )
 }
 
+/// Normalize a word or 3-letter ticker to an ISO 4217 currency code.
 fn normalize_currency(s: &str) -> Option<String> {
     let code: &str = match s.to_lowercase().as_str() {
         "usd" | "dollar" | "dollars" => "USD",
@@ -96,6 +111,7 @@ pub fn detect_intents(user_message: &str) -> Vec<ToolIntent> {
     let mut intents: Vec<ToolIntent> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // ── 1. Weather ────────────────────────────────────────────────────────────
     let location = WEATHER_IN_RE
         .captures(user_message)
         .and_then(|c| c.get(1))
@@ -114,6 +130,7 @@ pub fn detect_intents(user_message: &str) -> Vec<ToolIntent> {
         }
     }
 
+    // ── 2. Currency — explicit amount (e.g. "convert 100 USD to EUR") ─────────
     if let Some(caps) = CURRENCY_AMOUNT_RE.captures(user_message) {
         let amount: f64 = caps[1].parse().unwrap_or(1.0);
         let from_raw = &caps[2];
@@ -131,6 +148,7 @@ pub fn detect_intents(user_message: &str) -> Vec<ToolIntent> {
         }
     }
 
+    // ── 3. Currency — rate pair without amount (e.g. "USD to INR") ───────────
     if !intents.iter().any(|i| matches!(i, ToolIntent::Currency { .. })) {
         for caps in CURRENCY_PAIR_RE.captures_iter(user_message) {
             let from_raw = &caps[1];
@@ -156,6 +174,7 @@ pub fn detect_intents(user_message: &str) -> Vec<ToolIntent> {
         }
     }
 
+    // ── 4. Crypto price ───────────────────────────────────────────────────────
     let crypto_match = CRYPTO_PRICE_RE
         .captures(user_message)
         .and_then(|c| c.get(1))
@@ -179,6 +198,7 @@ pub fn detect_intents(user_message: &str) -> Vec<ToolIntent> {
         }
     }
 
+    // Cap at 3 tools to keep the injected context within token budget.
     intents.truncate(3);
     intents
 }
@@ -225,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_general_questions_no_tools() {
-        
+        // General knowledge goes directly to LLM — no tool round-trip
         let intents = detect_intents("What is quantum computing?");
         assert!(intents.is_empty());
         let intents = detect_intents("who is the current president of USA?");

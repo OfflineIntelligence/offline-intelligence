@@ -1,3 +1,5 @@
+// Server/src/llm_integration.rs
+// Direct LLM integration module for unified server architecture
 
 use crate::config::Config;
 use crate::memory::Message;
@@ -38,12 +40,14 @@ impl LLMEngine {
     pub async fn load_model(&self, model_path: String) -> Result<()> {
         let mut process_guard = self.backend_process.lock().await;
         
+        // Stop existing process if running
         if let Some(existing) = process_guard.as_mut() {
             info!("Stopping existing backend process on port {}", existing.port);
             let _ = existing.child.kill().await;
             let _ = existing.child.wait().await;
         }
 
+        // Start new backend process
         let port = self.config.llama_port;
         let child = self.spawn_backend_process(&model_path, port).await?;
         
@@ -54,6 +58,7 @@ impl LLMEngine {
             model_path: model_path_clone,
         });
 
+        // Wait for backend to be ready
         self.wait_for_backend_ready(port).await?;
 
         info!("LLM engine initialized with model: {}", model_path);
@@ -164,6 +169,7 @@ impl LLMEngine {
             return Err(anyhow::anyhow!("Backend status {}: {}", status, body));
         }
 
+        // Convert response to stream of bytes
         let byte_stream = response
             .bytes_stream()
             .map(|result| result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
@@ -190,6 +196,7 @@ impl LLMEngine {
     }
 }
 
+// Helper function to extract content from OpenAI-style responses
 pub fn extract_openai_content(openai_response: &Value) -> String {
     openai_response["choices"][0]["message"]["content"]
         .as_str()
@@ -202,6 +209,7 @@ pub fn extract_openai_content(openai_response: &Value) -> String {
         })
 }
 
+// Helper function to extract thinking content
 pub fn extract_thinking(openai_response: &Value) -> Option<String> {
     let content = extract_openai_content(openai_response);
     if content.contains("<thoughts>") && content.contains("</thoughts>") {

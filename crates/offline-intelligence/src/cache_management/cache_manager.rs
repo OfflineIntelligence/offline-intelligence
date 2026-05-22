@@ -1,3 +1,4 @@
+//! Main KV cache management engine
 
 use crate::memory::Message;
 use crate::memory_db::MemoryDatabase;
@@ -12,6 +13,7 @@ use tracing::{info, debug, warn};
 use chrono::{Utc, DateTime};
 use serde::Serialize;
 
+/// Main KV cache management engine
 pub struct KVCacheManager {
     config: KVCacheConfig,
     database: Arc<MemoryDatabase>,
@@ -119,7 +121,8 @@ pub struct CacheProcessingResult {
 }
 
 impl KVCacheManager {
-    
+    /// Create a new KV cache manager.
+    /// Pass `llm_worker` to enable pre-clear summarization; pass `None` to disable it.
     pub fn new(
         config: KVCacheConfig,
         database: Arc<MemoryDatabase>,
@@ -142,6 +145,7 @@ impl KVCacheManager {
         })
     }
     
+    /// Initialize or get session state
     fn get_or_create_session_state(&mut self, session_id: &str) -> &mut SessionCacheState {
         self.session_state.entry(session_id.to_string())
             .or_insert_with(|| SessionCacheState {
@@ -155,6 +159,7 @@ impl KVCacheManager {
             })
     }
     
+    /// Process a conversation and manage cache
     pub async fn process_conversation(
         &mut self,
         session_id: &str,
@@ -165,15 +170,18 @@ impl KVCacheManager {
     ) -> anyhow::Result<CacheProcessingResult> {
         debug!("Processing conversation for session: {}", session_id);
         
+        // First, check conditions without mutable borrow
         let current_conversation_count = self.session_state
             .get(session_id)
             .map(|s| s.conversation_count)
             .unwrap_or(0);
         
+        // Calculate actual cache memory usage
         let actual_cache_memory = self.calculate_cache_memory_usage(current_kv_entries);
         let should_clear_by_conversation = self.should_clear_by_conversation(current_conversation_count + 1);
         let should_clear_by_memory = self.should_clear_by_memory(actual_cache_memory, max_cache_size_bytes);
         
+        // Now get mutable reference
         let session_state = self.get_or_create_session_state(session_id);
         session_state.conversation_count += 1;
         session_state.cache_size_bytes = actual_cache_memory;
@@ -195,6 +203,7 @@ impl KVCacheManager {
                 ClearReason::MemoryThreshold
             };
 
+            // Release the mutable borrow before calling clear_cache
             let _ = session_state;
 
             let clear_result = self.clear_cache(session_id, current_kv_entries, messages, clear_reason).await?;
@@ -202,6 +211,7 @@ impl KVCacheManager {
             result.clear_result = Some(clear_result.clone());
             result.bridge_messages.push(clear_result.bridge_message);
             
+            // Update session state after clearing
             if let Some(state) = self.session_state.get_mut(session_id) {
                 state.conversation_count = 0;
                 state.last_cleared_at = Some(Utc::now());
@@ -209,6 +219,8 @@ impl KVCacheManager {
             }
         }
         
+        // If the cache was cleared in a *previous* turn (not just now), prepend the stored
+        // summary so the LLM gets cheap continuity without recomputing the full history.
         if !result.should_clear_cache {
             let was_previously_cleared = self.session_state
                 .get(session_id)
@@ -236,6 +248,7 @@ impl KVCacheManager {
             }
         }
 
+        // Check if we should retrieve context
         let should_retrieve = self.should_retrieve_context(messages);
         if should_retrieve {
             let last_user_message = messages.iter()
@@ -256,9 +269,11 @@ impl KVCacheManager {
             }
         }
         
+        // Update database metadata
         if let Some(state) = self.session_state.get(session_id) {
             self.update_session_metadata(session_id, state).await?;
             
+            // Generate embeddings for preserved KV entries if enabled
             if self.config.generate_cache_embeddings && !current_kv_entries.is_empty() {
                 self.generate_and_store_kv_embeddings(session_id, current_kv_entries).await?;
             }
@@ -267,13 +282,15 @@ impl KVCacheManager {
         Ok(result)
     }
     
+    /// Check if cache needs to be cleared based on conversation count
     pub fn should_clear_by_conversation(&self, conversation_count: usize) -> bool {
         conversation_count >= self.config.clear_after_conversations
     }
     
+    /// Check if cache needs to be cleared based on memory usage
     pub fn should_clear_by_memory(&self, current_usage_bytes: usize, max_memory_bytes: usize) -> bool {
         if max_memory_bytes == 0 {
-            
+            // If no max is set, use the configuration default
             let max_memory = self.estimate_max_cache_memory();
             let usage_percent = current_usage_bytes as f32 / max_memory as f32;
             return usage_percent >= self.config.memory_threshold_percent;
@@ -283,6 +300,12 @@ impl KVCacheManager {
         usage_percent >= self.config.memory_threshold_percent
     }
     
+    /// Estimate maximum KV cache memory.
+    ///
+    /// Priority order:
+    /// 1. `config.max_cache_entries * ~1KB` when the operator has set an explicit entry limit
+    /// 2. 25% of system available memory (queried via sysinfo), clamped to [256 MB, 8 GB]
+    /// 3. Hard-coded 1 GB fallback if sysinfo returns zero
     fn estimate_max_cache_memory(&self) -> usize {
         if self.config.max_cache_entries > 0 {
             return self.config.max_cache_entries * 1024;
@@ -295,28 +318,31 @@ impl KVCacheManager {
         };
 
         if available > 0 {
-            
+            // Allocate 25% of currently available RAM to the KV cache, within sane bounds
             let target = available / 4;
-            const MIN: usize = 256 * 1024 * 1024;  
-            const MAX: usize = 8 * 1024 * 1024 * 1024; 
+            const MIN: usize = 256 * 1024 * 1024;  // 256 MB
+            const MAX: usize = 8 * 1024 * 1024 * 1024; // 8 GB
             target.clamp(MIN, MAX)
         } else {
-            1024 * 1024 * 1024 
+            1024 * 1024 * 1024 // 1 GB hard fallback
         }
     }
     
+    /// Calculate the actual memory usage of current cache entries
     pub fn calculate_cache_memory_usage(&self, entries: &[KVEntry]) -> usize {
         entries.iter().map(|entry| entry.size_bytes).sum()
     }
     
+    /// Check if we should retrieve context for current messages
     fn should_retrieve_context(&self, messages: &[Message]) -> bool {
         if !self.config.retrieval_enabled {
             return false;
         }
         
+        // Check last user message for complex queries
         if let Some(last_user) = messages.iter().rev().find(|m| m.role == "user") {
             let content = &last_user.content;
-            
+            // Retrieve for questions, complex requests, or code
             content.contains('?') ||
             content.len() > 100 ||
             content.contains("```") ||
@@ -328,6 +354,9 @@ impl KVCacheManager {
         }
     }
     
+    /// Clear KV cache intelligently.
+    /// `messages` is the full conversation up to this point — used to generate a compact
+    /// pre-clear summary so the LLM can be re-fed cheaply when the session continues.
     pub async fn clear_cache(
         &mut self,
         session_id: &str,
@@ -339,8 +368,10 @@ impl KVCacheManager {
 
         let start_time = std::time::Instant::now();
 
+        // 1. Extract important entries
         let extracted = self.cache_extractor.extract_entries(current_entries, &self.cache_scorer);
 
+        // 2. Filter entries to preserve
         let to_preserve = self.cache_extractor.filter_preserved_entries(
             &extracted,
             self.config.min_importance_to_preserve,
@@ -348,30 +379,37 @@ impl KVCacheManager {
             self.config.preserve_code_entries,
         );
 
+        // 3. Create snapshot if configured
         let snapshot_id = if self.should_create_snapshot(&reason) {
             Some(self.create_snapshot(session_id, &to_preserve).await?)
         } else {
             None
         };
 
+        // 4. Extract keywords from preserved entries
         let preserved_keywords: Vec<String> = to_preserve.iter()
             .flat_map(|e| e.keywords.clone())
             .take(10)
             .collect();
 
+        // 5. Generate a compact pre-clear summary so re-feeding after the clear
+        //    costs only ~300 tokens instead of the full conversation history.
         let summary_text = self.generate_pre_clear_summary(session_id, messages).await;
 
+        // 6. Persist the updated cumulative summary (one row per session, replaced each time).
         if let Some(ref text) = summary_text {
             let token_estimate = (text.len() / 4) as i32;
             let msg_count = messages.len() as i32;
             if let Err(e) = self.database.session_summaries.upsert(
                 session_id, text, token_estimate, msg_count,
             ) {
-                
+                // Non-fatal: log and continue without the summary
                 info!("Could not persist cumulative summary for {}: {}", session_id, e);
             }
         }
 
+        // 7. Build bridge message: use the summary if available, otherwise fall back
+        //    to the generic bridge sentence from CacheContextBridge.
         let bridge_message = match summary_text {
             Some(ref text) => format!(
                 "[Memory compressed — conversation summary up to this point:]\n{}",
@@ -384,6 +422,7 @@ impl KVCacheManager {
             ),
         };
 
+        // 8. Update statistics
         self.statistics.record_clear(
             current_entries.len(),
             to_preserve.len(),
@@ -391,6 +430,7 @@ impl KVCacheManager {
             session_id,
         );
 
+        // 9. Update session state
         if let Some(state) = self.session_state.get_mut(session_id) {
             state.entry_count = to_preserve.len();
             state.last_snapshot_id = snapshot_id;
@@ -411,21 +451,31 @@ impl KVCacheManager {
         })
     }
 
+    /// Call the LLM to produce an updated cumulative summary before clearing.
+    ///
+    /// If a previous summary exists for this session, it is included in the prompt so the
+    /// LLM produces a single unified summary covering the entire conversation history —
+    /// not just the current window. This way there is always exactly one summary per session
+    /// and it grows more complete with every cache clear.
+    ///
+    /// Returns `None` if the LLM is unavailable or there is nothing worth summarizing.
     async fn generate_pre_clear_summary(
         &self,
         session_id: &str,
         messages: &[crate::memory::Message],
     ) -> Option<String> {
-        
+        // Only worth summarizing if there's real content
         if messages.len() < 4 {
             return None;
         }
 
         let llm_worker = self.llm_worker.as_ref()?;
 
+        // Fetch the existing cumulative summary for this session, if any
         let existing_summary = self.database.session_summaries.get(session_id)
             .unwrap_or(None);
 
+        // Build system prompt — tell the LLM what it already knows vs what is new
         let system_content = match &existing_summary {
             Some(prev) => format!(
                 "You are a concise summarizer. You will be given a running summary of a \
@@ -448,6 +498,7 @@ impl KVCacheManager {
             },
         ];
 
+        // Include at most the last 40 messages to keep the summarization call cheap
         let tail = if messages.len() > 40 {
             &messages[messages.len() - 40..]
         } else {
@@ -485,6 +536,7 @@ impl KVCacheManager {
         }
     }
     
+    /// Check if we should create a snapshot
     fn should_create_snapshot(&self, reason: &ClearReason) -> bool {
         if !self.config.enabled {
             return false;
@@ -500,6 +552,7 @@ impl KVCacheManager {
         }
     }
     
+    /// Create a snapshot of preserved entries
     async fn create_snapshot(
         &self,
         session_id: &str,
@@ -507,6 +560,7 @@ impl KVCacheManager {
     ) -> anyhow::Result<i64> {
         debug!("Creating KV snapshot for session: {}", session_id);
         
+        // Convert to database format
         let db_entries: Vec<KVEntry> = preserved_entries.iter()
             .map(|entry| {
                 KVEntry {
@@ -527,12 +581,14 @@ impl KVCacheManager {
             })
             .collect();
         
+        // Store in database
         let snapshot_id = self.database.create_kv_snapshot(session_id, &db_entries).await?;
         
         info!("Created KV snapshot {} with {} entries", snapshot_id, db_entries.len());
         Ok(snapshot_id)
     }
     
+    /// Retrieve relevant context from all tiers
     pub async fn retrieve_context(
         &mut self,
         session_id: &str,
@@ -547,33 +603,40 @@ impl KVCacheManager {
         let mut results = Vec::new();
         let mut searched_tiers = Vec::new();
         
+        // Tier 1: Search active cache
         if !current_cache_entries.is_empty() {
             searched_tiers.push(1);
             let tier1_results = self.search_tier1(current_cache_entries, &keywords).await?;
             results.extend(tier1_results);
         }
         
+        // Tier 2: Search KV snapshots if Tier 1 insufficient
         if results.len() < 5 {
             searched_tiers.push(2);
             let tier2_results = self.search_tier2(session_id, &keywords).await?;
             results.extend(tier2_results);
         }
         
+        // Tier 3: Search complete messages if still insufficient
         if results.len() < 3 {
             searched_tiers.push(3);
             let tier3_results = self.search_tier3(session_id, &keywords).await?;
             results.extend(tier3_results);
         }
         
+        // Sort all results by similarity score
         results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score)
             .unwrap_or(std::cmp::Ordering::Equal));
         
+        // Limit total results
         results.truncate(20);
         
+        // Update engagement scores for retrieved entries
         for result in &results {
             self.cache_scorer.update_engagement(&result.entry.key_hash, true);
         }
         
+        // Generate bridge message if we found results
         let bridge_message = if !results.is_empty() {
             let primary_tier = results.iter()
                 .map(|r| r.source_tier)
@@ -596,6 +659,7 @@ impl KVCacheManager {
         
         let duration = start_time.elapsed();
         
+        // Update statistics
         self.statistics.record_retrieval(
             results.len(),
             searched_tiers.clone(),
@@ -612,6 +676,7 @@ impl KVCacheManager {
         })
     }
     
+    /// Search Tier 1 (Active KV cache)
     async fn search_tier1(
         &self,
         entries: &[KVEntry],
@@ -621,7 +686,7 @@ impl KVCacheManager {
         
         for entry in entries {
             let similarity = self.calculate_keyword_similarity(entry, keywords);
-            if similarity > 0.3 { 
+            if similarity > 0.3 { // Threshold for Tier 1
                 let matched_keywords = self.get_matching_keywords(entry, keywords);
                 results.push(RetrievedEntry {
                     entry: entry.clone(),
@@ -633,35 +698,37 @@ impl KVCacheManager {
             }
         }
         
+        // Sort by similarity and access count
         results.sort_by(|a, b| {
             b.similarity_score.partial_cmp(&a.similarity_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(b.entry.access_count.cmp(&a.entry.access_count))
         });
         
-        results.truncate(10); 
+        results.truncate(10); // Limit results
         
         debug!("Tier 1 search found {} results", results.len());
         Ok(results)
     }
     
+    /// Search Tier 2 (KV snapshots)
     async fn search_tier2(
         &self,
         session_id: &str,
         keywords: &[String],
     ) -> anyhow::Result<Vec<RetrievedEntry>> {
-        
+        // Get recent snapshots (max 3 for performance)
         let snapshots = self.database.get_recent_kv_snapshots(session_id, 3).await?;
         
         let mut all_results = Vec::new();
         
         for snapshot in snapshots {
-            
+            // Search snapshot entries
             let entries = self.database.get_kv_snapshot_entries(snapshot.id).await?;
             
             for entry in entries {
                 let similarity = self.calculate_keyword_similarity(&entry, keywords);
-                if similarity > 0.4 { 
+                if similarity > 0.4 { // Higher threshold for Tier 2
                     let matched_keywords = self.get_matching_keywords(&entry, keywords);
                     all_results.push(RetrievedEntry {
                         entry,
@@ -674,6 +741,7 @@ impl KVCacheManager {
             }
         }
         
+        // Sort and limit
         all_results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score)
             .unwrap_or(std::cmp::Ordering::Equal));
         all_results.truncate(15);
@@ -682,6 +750,7 @@ impl KVCacheManager {
         Ok(all_results)
     }
     
+    /// Search Tier 3 (Complete messages)
     async fn search_tier3(
         &self,
         session_id: &str,
@@ -691,6 +760,7 @@ impl KVCacheManager {
             return Ok(Vec::new());
         }
         
+        // Search messages by keywords
         let messages = self.database.conversations.search_messages_by_keywords(
             session_id,
             keywords,
@@ -700,7 +770,7 @@ impl KVCacheManager {
         let mut results = Vec::new();
         
         for message in messages {
-            
+            // Convert message to KV entry for consistency
             let entry = KVEntry {
                 key_hash: format!("msg_{}", message.id),
                 key_data: Some(message.content.as_bytes().to_vec()),
@@ -718,7 +788,7 @@ impl KVCacheManager {
             };
             
             let similarity = self.calculate_keyword_similarity(&entry, keywords);
-            if similarity > 0.5 { 
+            if similarity > 0.5 { // Highest threshold for Tier 3
                 results.push(RetrievedEntry {
                     entry,
                     similarity_score: similarity,
@@ -729,6 +799,7 @@ impl KVCacheManager {
             }
         }
         
+        // Sort by timestamp (most recent first) and similarity
         results.sort_by(|a, b| {
             b.entry.last_accessed.cmp(&a.entry.last_accessed)
                 .then(b.similarity_score.partial_cmp(&a.similarity_score)
@@ -751,6 +822,7 @@ impl KVCacheManager {
             return 0.0;
         }
         
+        // Simple keyword matching with partial matches
         let mut matches = 0.0;
         for keyword in keywords {
             let keyword_lower = keyword.to_lowercase();
@@ -803,6 +875,7 @@ impl KVCacheManager {
         stop_words.contains(&word)
     }
     
+    /// Update session metadata in database
     async fn update_session_metadata(
         &self,
         session_id: &str,
@@ -811,6 +884,13 @@ impl KVCacheManager {
         self.database.update_kv_cache_metadata(session_id, state).await
     }
     
+    /// Generate and store embeddings for KV cache entries that carry text content.
+    ///
+    /// Each KV entry is matched against the session's stored messages by content.
+    /// Only entries whose text matches an actual stored message get an embedding —
+    /// purely structural entries (attention heads with no readable content) are skipped.
+    /// The embedding is stored via `EmbeddingStore` so it becomes searchable by
+    /// `SmartRetrieval` on future context misses.
     async fn generate_and_store_kv_embeddings(
         &self,
         session_id: &str,
@@ -818,6 +898,7 @@ impl KVCacheManager {
     ) -> anyhow::Result<()> {
         debug!("Generating embeddings for {} KV cache entries", kv_entries.len());
 
+        // Build a (entry_index, text) list from entries that carry readable content
         let text_entries: Vec<(usize, String)> = kv_entries.iter().enumerate()
             .filter_map(|(i, entry)| {
                 let text = entry.key_data.as_ref()
@@ -832,6 +913,8 @@ impl KVCacheManager {
             return Ok(());
         }
 
+        // Build a content→message_id map for the session so we can link embeddings
+        // back to the correct messages row (required for EmbeddingStore foreign key).
         let stored_messages = self.database.conversations
             .get_session_messages(session_id, Some(1000), None)
             .unwrap_or_default();
@@ -858,6 +941,7 @@ impl KVCacheManager {
                     if embedding_vec.is_empty() { continue; }
                     let Some((_, ref text)) = text_entries.get(pos) else { continue };
 
+                    // Find the message_id this text belongs to
                     let message_id = match content_to_id.get(text.as_str()).copied() {
                         Some(id) => id,
                         None => {
@@ -869,7 +953,7 @@ impl KVCacheManager {
                     };
 
                     let embedding = crate::memory_db::schema::Embedding {
-                        id: 0, 
+                        id: 0, // auto-assigned by DB
                         message_id,
                         embedding: embedding_vec.clone(),
                         embedding_model: "local-llm".to_string(),
@@ -879,7 +963,7 @@ impl KVCacheManager {
                     if let Err(e) = self.database.embeddings.store_embedding(&embedding) {
                         warn!("Failed to store KV embedding for message {}: {}", message_id, e);
                     } else {
-                        
+                        // Mark the message so we don't re-embed it later
                         let _ = self.database.conversations.mark_embedding_generated(message_id);
                         stored += 1;
                     }
@@ -898,26 +982,32 @@ impl KVCacheManager {
         Ok(())
     }
     
+    /// Get reference to LLM worker for embedding generation
     fn get_llm_worker(&self) -> Option<&crate::worker_threads::LLMWorker> {
         self.llm_worker.as_ref().map(|worker| worker.as_ref())
     }
     
+    /// Set the LLM worker reference
     pub fn set_llm_worker(&mut self, llm_worker: Arc<crate::worker_threads::LLMWorker>) {
         self.llm_worker = Some(llm_worker);
     }
     
+    /// Get cache statistics
     pub fn get_statistics(&self) -> &CacheStatistics {
         &self.statistics
     }
     
+    /// Get session state
     pub fn get_session_state(&self, session_id: &str) -> Option<&SessionCacheState> {
         self.session_state.get(session_id)
     }
     
+    /// Get all session states
     pub fn get_all_session_states(&self) -> &HashMap<String, SessionCacheState> {
         &self.session_state
     }
     
+    /// Restore cache from snapshot
     pub async fn restore_from_snapshot(
         &mut self,
         session_id: &str,
@@ -927,23 +1017,28 @@ impl KVCacheManager {
         
         let entries: Vec<KVEntry> = self.database.get_kv_snapshot_entries(snapshot_id).await?;
         
+        // Update session state
         if let Some(state) = self.session_state.get_mut(session_id) {
             state.entry_count = entries.len();
             state.last_snapshot_id = Some(snapshot_id);
         }
         
+        // Generate bridge message
         let bridge_message = self.context_bridge.create_restore_bridge(
             entries.len(),
-            None, 
+            None, // Could calculate snapshot age if needed
         );
         
         info!("{}", bridge_message);
         
+        // Update statistics
         self.statistics.record_restore(entries.len(), session_id);
         
         Ok(entries)
     }
     
+    /// Manual cache clear (for testing or admin purposes).
+    /// No messages are available in this path, so no pre-clear summary is generated.
     pub async fn manual_clear_cache(
         &mut self,
         session_id: &str,
@@ -952,6 +1047,7 @@ impl KVCacheManager {
         self.clear_cache(session_id, current_entries, &[], ClearReason::Manual).await
     }
     
+    /// Check cache health and perform maintenance if needed
     pub async fn perform_maintenance(&mut self) -> anyhow::Result<MaintenanceResult> {
         let mut result = MaintenanceResult {
             sessions_cleaned: 0,
@@ -959,6 +1055,7 @@ impl KVCacheManager {
             errors: Vec::new(),
         };
         
+        // Clean up old session states (inactive for > 24 hours)
         let cutoff = Utc::now() - chrono::Duration::hours(24);
         let sessions_to_clean: Vec<String> = self.session_state.iter()
             .filter(|(_, state)| {
@@ -975,6 +1072,7 @@ impl KVCacheManager {
             }
         }
         
+        // Prune old snapshots if configured
         if let SnapshotStrategy::Incremental { max_snapshots, .. } = &self.config.snapshot_strategy {
             let pruned = self.prune_old_snapshots(*max_snapshots).await?;
             result.snapshots_pruned = pruned;
@@ -983,16 +1081,19 @@ impl KVCacheManager {
         Ok(result)
     }
     
+    /// Cleanup a specific session
     async fn cleanup_session(&mut self, session_id: &str) -> anyhow::Result<()> {
         self.session_state.remove(session_id);
         self.database.cleanup_session_snapshots(session_id).await?;
         Ok(())
     }
     
+    /// Prune old snapshots
     async fn prune_old_snapshots(&self, keep_max: usize) -> anyhow::Result<usize> {
         self.database.prune_old_kv_snapshots(keep_max).await
     }
     
+    /// Export cache statistics
     pub fn export_statistics(&self) -> CacheStatisticsExport {
         CacheStatisticsExport {
             total_clears: self.statistics.total_clears,
@@ -1006,14 +1107,17 @@ impl KVCacheManager {
         }
     }
     
+    /// Get configuration
     pub fn get_config(&self) -> &KVCacheConfig {
         &self.config
     }
     
+    /// Update configuration
     pub fn update_config(&mut self, config: KVCacheConfig) {
         self.config = config;
     }
     
+    /// Flush current cache state to database for persistence
     pub async fn flush_to_database(&self, session_id: &str, current_entries: &[KVEntry]) -> anyhow::Result<Option<i64>> {
         if current_entries.is_empty() {
             debug!("No entries to flush for session: {}", session_id);
@@ -1022,8 +1126,10 @@ impl KVCacheManager {
 
         debug!("Flushing {} cache entries to database for session: {}", current_entries.len(), session_id);
 
+        // Create a snapshot of current entries
         let snapshot_id = self.database.create_kv_snapshot(session_id, current_entries).await?;
         
+        // Update session metadata
         if let Some(state) = self.session_state.get(session_id) {
             let mut updated_state = state.clone();
             updated_state.entry_count = current_entries.len();
@@ -1038,27 +1144,35 @@ impl KVCacheManager {
         Ok(Some(snapshot_id))
     }
     
+    /// Get cache scorer reference
     pub fn cache_scorer(&self) -> &CacheEntryScorer {
         &self.cache_scorer
     }
     
+    /// Get mutable cache scorer reference
     pub fn cache_scorer_mut(&mut self) -> &mut CacheEntryScorer {
         &mut self.cache_scorer
     }
     
+    /// Reset statistics
     pub fn reset_statistics(&mut self) {
         self.statistics = CacheStatistics::new();
     }
     
+    /// Shutdown method to flush all pending cache data to database
     pub async fn shutdown_flush(&self) -> anyhow::Result<()> {
         info!("Starting KV cache manager shutdown flush...");
 
+        // Get all current session states
         let all_states = self.get_all_session_states().clone();
         
         for (session_id, state) in all_states {
             info!("Flushing cache data for session: {} (entries: {}, size: {} bytes)", 
                   session_id, state.entry_count, state.cache_size_bytes);
             
+            // KVCacheManager stores metadata, not the raw tensors — those live inside
+            // the llama-server process and are accessed via LlamaKVCacheInterface.
+            // Persisting metadata is the correct shutdown action here.
             self.update_session_metadata(&session_id, &state).await?;
         }
         
@@ -1092,6 +1206,7 @@ impl CacheStatistics {
             details: format!("{:?}", reason),
         });
         
+        // Keep only last 100 operations
         if self.operation_history.len() > 100 {
             self.operation_history.remove(0);
         }
@@ -1116,6 +1231,7 @@ impl CacheStatistics {
             details: format!("Tiers: {:?}, Keywords: {}", tiers_searched, keywords_count),
         });
         
+        // Keep only last 100 operations
         if self.operation_history.len() > 100 {
             self.operation_history.remove(0);
         }
@@ -1130,6 +1246,7 @@ impl CacheStatistics {
             details: "Cache restored from snapshot".to_string(),
         });
         
+        // Keep only last 100 operations
         if self.operation_history.len() > 100 {
             self.operation_history.remove(0);
         }
@@ -1144,6 +1261,7 @@ impl CacheStatistics {
             details: format!("Snapshot ID: {}", snapshot_id),
         });
         
+        // Keep only last 100 operations
         if self.operation_history.len() > 100 {
             self.operation_history.remove(0);
         }
@@ -1183,11 +1301,13 @@ impl RetrievalResult {
             return 0;
         }
         
+        // Count entries by tier
         let mut tier_counts = HashMap::new();
         for entry in &self.retrieved_entries {
             *tier_counts.entry(entry.source_tier).or_insert(0) += 1;
         }
         
+        // Return tier with most entries
         tier_counts.into_iter()
             .max_by_key(|(_, count)| *count)
             .map(|(tier, _)| tier)

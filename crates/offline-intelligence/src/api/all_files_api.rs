@@ -1,3 +1,6 @@
+//! All Files API endpoints - unlimited storage for all file formats
+//!
+//! Provides user-managed file storage for context inclusion via @filename.
 
 use axum::{
     extract::{Multipart, Path, Query, State},
@@ -11,6 +14,7 @@ use tracing::{error, info, warn};
 use crate::shared_state::UnifiedAppState;
 use crate::memory_db::{AllFile, AllFileTree};
 
+/// Response structure for all file entries
 #[derive(Debug, Serialize)]
 pub struct AllFileEntryResponse {
     pub id: i64,
@@ -91,6 +95,7 @@ pub struct UploadWithPathRequest {
     pub parent_path: Option<String>,
 }
 
+/// GET /all-files - Get all files as a nested tree
 pub async fn get_all_files(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -110,6 +115,7 @@ pub async fn get_all_files(
     }
 }
 
+/// GET /all-files/:id - Get single file metadata
 pub async fn get_all_file_by_id(
     State(state): State<UnifiedAppState>,
     Path(id): Path<i64>,
@@ -125,6 +131,7 @@ pub async fn get_all_file_by_id(
     }
 }
 
+/// GET /all-files/:id/content - Get file content for LLM processing
 pub async fn get_all_file_content(
     State(state): State<UnifiedAppState>,
     Path(id): Path<i64>,
@@ -146,6 +153,7 @@ pub async fn get_all_file_content(
     }
 }
 
+/// GET /all-files/search?q=... - Search files by name
 pub async fn search_all_files(
     State(state): State<UnifiedAppState>,
     Query(query): Query<SearchQuery>,
@@ -166,6 +174,7 @@ pub async fn search_all_files(
     }
 }
 
+/// GET /all-files/all - Get flat list of all files (for @filename autocomplete)
 pub async fn get_all_files_flat(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -185,6 +194,7 @@ pub async fn get_all_files_flat(
     }
 }
 
+/// POST /all-files/folder - Create a new folder
 pub async fn create_all_files_folder(
     State(state): State<UnifiedAppState>,
     Json(request): Json<CreateFolderRequest>,
@@ -210,6 +220,7 @@ pub async fn create_all_files_folder(
     }
 }
 
+/// POST /all-files/upload - Upload files (supports folder structure via webkitdirectory)
 pub async fn upload_all_file(
     State(state): State<UnifiedAppState>,
     Query(query): Query<UploadQuery>,
@@ -220,6 +231,7 @@ pub async fn upload_all_file(
     
     let mut files_to_upload: Vec<(Option<String>, String, Vec<u8>)> = Vec::new();
 
+    // Collect multipart fields
     let mut field_count = 0;
     let mut has_error = false;
     loop {
@@ -230,17 +242,18 @@ pub async fn upload_all_file(
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("file{}", files_to_upload.len()));
 
+                // Get relative path from webkitdirectory uploads BEFORE reading bytes
                 let relative_path = field
                     .headers()
                     .get("webkitrelativepath")
                     .and_then(|h| h.to_str().ok())
                     .map(|s| {
-                        
+                        // Remove the filename from the path to get just the directory
                         let path = std::path::Path::new(s);
                         let parent = path.parent()
                             .map(|p| p.to_string_lossy().to_string())
                             .unwrap_or_default();
-                        
+                        // Normalize path separators to forward slashes for consistency
                         parent.replace('\\', "/")
                     });
 
@@ -256,7 +269,7 @@ pub async fn upload_all_file(
                     }
                 }
             }
-            Ok(None) => break, 
+            Ok(None) => break, // No more fields
             Err(e) => {
                 error!("Error reading multipart field: {}", e);
                 has_error = true;
@@ -276,6 +289,7 @@ pub async fn upload_all_file(
         return Err(StatusCode::BAD_REQUEST);
     }
 
+    // Use the structure upload function to handle folders
     info!("Uploading {} files with structure, parent_id: {:?}", files_to_upload.len(), parent_id);
     match all_files.upload_files_with_structure(files_to_upload, parent_id) {
         Ok(uploaded) => {
@@ -295,6 +309,7 @@ pub async fn upload_all_file(
     }
 }
 
+/// POST /all-files/upload-structure - Upload files with folder structure
 pub async fn upload_all_files_structure(
     State(state): State<UnifiedAppState>,
     mut multipart: Multipart,
@@ -340,6 +355,7 @@ pub async fn upload_all_files_structure(
     }
 }
 
+/// DELETE /all-files/:id - Delete file or folder by ID
 pub async fn delete_all_file_by_id(
     State(state): State<UnifiedAppState>,
     Path(id): Path<i64>,
@@ -360,6 +376,7 @@ pub async fn delete_all_file_by_id(
     }
 }
 
+/// DELETE /all-files?path=... or ?id=... - Delete file by path or ID
 pub async fn delete_all_file(
     State(state): State<UnifiedAppState>,
     Query(query): Query<DeleteQuery>,

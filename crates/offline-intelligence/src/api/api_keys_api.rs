@@ -1,3 +1,13 @@
+//! API Keys Management Endpoints
+//!
+//! Provides REST endpoints for managing API keys:
+//! - Save/update HuggingFace token (encrypted with machine-specific key, stored in SQLite)
+//! - Retrieve keys (plaintext - decrypted using machine-specific key)
+//! - Delete keys
+//! - Mark keys as used with mode tracking
+//!
+//! Encryption/decryption is handled entirely inside `ApiKeysStore`.
+//! This layer only deals with plain-text values.
 
 use axum::{
     extract::{Query, State},
@@ -13,18 +23,23 @@ use crate::{
     shared_state::UnifiedAppState,
 };
 
+// ─── Request / Response types ────────────────────────────────────────────────
+
+/// Request body for saving or updating an API key.
 #[derive(Debug, Deserialize)]
 pub struct SaveApiKeyRequest {
-    pub key_type: String, 
-    pub value: String,    
+    pub key_type: String, // "huggingface"
+    pub value: String,    // Plain-text key value
 }
 
+/// Confirmation after saving an API key.
 #[derive(Debug, Serialize)]
 pub struct SaveApiKeyResponse {
     pub success: bool,
     pub message: String,
 }
 
+/// Response carrying a single API key value + metadata.
 #[derive(Debug, Serialize)]
 pub struct GetApiKeyResponse {
     pub key_type: String,
@@ -35,10 +50,13 @@ pub struct GetApiKeyResponse {
     pub usage_count: Option<i64>,
 }
 
+/// Response carrying all API keys.
 #[derive(Debug, Serialize)]
 pub struct GetAllApiKeysResponse {
     pub keys: Vec<GetApiKeyResponse>,
 }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn record_to_response(record: &ApiKeyRecord, value: Option<String>) -> GetApiKeyResponse {
     GetApiKeyResponse {
@@ -51,6 +69,11 @@ fn record_to_response(record: &ApiKeyRecord, value: Option<String>) -> GetApiKey
     }
 }
 
+// ─── Handlers ────────────────────────────────────────────────────────────────
+
+/// `POST /api-keys` — save or update an API key.
+///
+/// The plaintext value is encrypted using machine-specific encryption and stored in SQLite.
 pub async fn save_api_key(
     State(state): State<UnifiedAppState>,
     Json(payload): Json<SaveApiKeyRequest>,
@@ -76,6 +99,7 @@ pub async fn save_api_key(
     }
 }
 
+/// `GET /api-keys?key_type=<type>` — retrieve a single API key (plaintext).
 pub async fn get_api_key(
     State(state): State<UnifiedAppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -83,6 +107,7 @@ pub async fn get_api_key(
     let key_type_str = params.get("key_type").ok_or(StatusCode::BAD_REQUEST)?;
     let key_type = ApiKeyType::from_str(key_type_str).ok_or(StatusCode::BAD_REQUEST)?;
 
+    // Get plaintext (decrypts using machine-specific key).
     let value = state
         .shared_state
         .database_pool
@@ -93,6 +118,7 @@ pub async fn get_api_key(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
+    // Fetch metadata (created_at, last_used_at, …) for the response body.
     let metadata = state
         .shared_state
         .database_pool
@@ -116,6 +142,7 @@ pub async fn get_api_key(
     }))
 }
 
+/// `GET /api-keys/all` — retrieve all API keys with their plaintext values.
 pub async fn get_all_api_keys(
     State(state): State<UnifiedAppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -139,6 +166,7 @@ pub async fn get_all_api_keys(
     }
 }
 
+/// `DELETE /api-keys?key_type=<type>` — delete an API key from storage.
 pub async fn delete_api_key(
     State(state): State<UnifiedAppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -173,10 +201,11 @@ pub async fn delete_api_key(
     }
 }
 
+/// `POST /api-keys/mark-used` — record that a key was used with a given mode.
 #[derive(Debug, Deserialize)]
 pub struct MarkKeyUsedRequest {
     pub key_type: String,
-    pub mode: String, 
+    pub mode: String, // "offline" or "online"
 }
 
 pub async fn mark_key_used(
@@ -202,18 +231,23 @@ pub async fn mark_key_used(
     }
 }
 
+/// Request body for verifying an API key.
 #[derive(Debug, Deserialize)]
 pub struct VerifyApiKeyRequest {
     pub key_type: String,
     pub api_key: String,
 }
 
+/// Response for API key verification.
 #[derive(Debug, Serialize)]
 pub struct VerifyApiKeyResponse {
     pub valid: bool,
     pub message: String,
 }
 
+/// `POST /api-keys/verify` — verify an API key by calling the provider's API.
+///
+/// - For HuggingFace: Calls GET https://huggingface.co/api/whoami
 pub async fn verify_api_key(
     State(state): State<UnifiedAppState>,
     Json(payload): Json<VerifyApiKeyRequest>,
@@ -227,58 +261,9 @@ pub async fn verify_api_key(
         }));
     }
 
-    let client = reqwest::Client::new();
     let http_client = state.http_client.clone();
 
     match key_type {
-        ApiKeyType::OpenRouter => {
-            let url = "https://openrouter.ai/api/v1/key";
-            match http_client
-                .get(url)
-                .header("Authorization", format!("Bearer {}", payload.api_key))
-                .send()
-                .await
-            {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        info!("OpenRouter API key verified successfully, saving to database");
-                        
-                        if let Err(e) = state.shared_state.database_pool.api_keys.save_key(key_type, &payload.api_key) {
-                            error!("Failed to save verified OpenRouter API key: {}", e);
-                            return Ok(Json(VerifyApiKeyResponse {
-                                valid: false,
-                                message: "Key verified but failed to save. Please try again.".to_string(),
-                            }));
-                        }
-                        
-                        Ok(Json(VerifyApiKeyResponse {
-                            valid: true,
-                            message: "OpenRouter API key is valid".to_string(),
-                        }))
-                    } else if resp.status() == StatusCode::UNAUTHORIZED || resp.status() == StatusCode::FORBIDDEN {
-                        info!("OpenRouter API key verification failed: invalid credentials");
-                        Ok(Json(VerifyApiKeyResponse {
-                            valid: false,
-                            message: "Invalid OpenRouter API key. Please check and try again.".to_string(),
-                        }))
-                    } else {
-                        let status = resp.status();
-                        error!("OpenRouter API key verification returned unexpected status: {}", status);
-                        Ok(Json(VerifyApiKeyResponse {
-                            valid: false,
-                            message: format!("OpenRouter API error: {}", status),
-                        }))
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to verify OpenRouter API key: {}", e);
-                    Ok(Json(VerifyApiKeyResponse {
-                        valid: false,
-                        message: "Failed to connect to OpenRouter API. Please check your internet connection.".to_string(),
-                    }))
-                }
-            }
-        }
         ApiKeyType::HuggingFace => {
             let url = "https://huggingface.co/api/whoami";
             match http_client
@@ -291,6 +276,7 @@ pub async fn verify_api_key(
                     if resp.status().is_success() {
                         info!("HuggingFace token verified successfully, saving to database");
                         
+                        // Save the verified token to the database
                         if let Err(e) = state.shared_state.database_pool.api_keys.save_key(key_type, &payload.api_key) {
                             error!("Failed to save verified HuggingFace token: {}", e);
                             return Ok(Json(VerifyApiKeyResponse {

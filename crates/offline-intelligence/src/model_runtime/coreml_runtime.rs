@@ -1,3 +1,5 @@
+//! CoreML Runtime Adapter (macOS only)
+//! For Apple Silicon optimized models
 
 #[allow(unused_imports)]
 use async_trait::async_trait;
@@ -64,6 +66,7 @@ impl CoreMLRuntime {
             self.server_process = Some(child);
             self.base_url = format!("http://{}:{}", config.host, config.port);
 
+            // Wait for server to be ready (up to 120 seconds) with exponential backoff.
             let _start = std::time::Instant::now();
             let mut delay_ms: u64 = 100;
             let mut last_log_secs: u64 = 0;

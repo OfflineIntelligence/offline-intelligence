@@ -1,3 +1,4 @@
+//! Conversation storage and retrieval operations with batch support and safe parsing
 
 use crate::memory_db::schema::*;
 use rusqlite::{params, Result, Row, Connection};
@@ -8,6 +9,7 @@ use std::sync::Arc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 
+/// Parameters for storing a message
 pub struct MessageParams<'a> {
     pub session_id: &'a str,
     pub role: &'a str,
@@ -17,24 +19,30 @@ pub struct MessageParams<'a> {
     pub importance_score: f32,
 }
 
+/// Manages conversation storage and retrieval using a connection pool
 pub struct ConversationStore {
     pool: Arc<Pool<SqliteConnectionManager>>,
 }
 
 impl ConversationStore {
-    
+    /// Create a new conversation store with a shared connection pool
     pub fn new(pool: Arc<Pool<SqliteConnectionManager>>) -> Self {
         Self { pool }
     }
 
+    /// Internal helper to get a connection from the pool
     fn get_conn(&self) -> anyhow::Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| anyhow::anyhow!("Failed to get connection from pool: {}", e))
     }
 
+    /// Public connection accessor for cross-module queries (e.g., search_api)
     pub fn get_conn_public(&self) -> anyhow::Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.get_conn()
     }
 
+    // --- Transactional & Internal Helpers ---
+
+    /// Internal helper to update session access using an existing connection or transaction
     fn update_session_access_with_conn(&self, conn: &Connection, session_id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         conn.execute(
@@ -44,12 +52,13 @@ impl ConversationStore {
         Ok(())
     }
 
+    /// Store a message using an external transaction
     pub fn store_message_with_tx(
         &self,
         tx: &mut Connection,
         params: MessageParams,
     ) -> anyhow::Result<StoredMessage> {
-        
+        // Update session access time
         self.update_session_access_with_conn(tx, params.session_id)?;
         
         let now = Utc::now();
@@ -85,10 +94,13 @@ impl ConversationStore {
         })
     }
 
+    // --- Batch Operations ---
+
+    /// Store multiple messages in batch
     pub fn store_messages_batch(
         &self,
         session_id: &str,
-        messages: &[(String, String, i32, i32, f32)], 
+        messages: &[(String, String, i32, i32, f32)], // (role, content, index, tokens, importance)
     ) -> anyhow::Result<Vec<StoredMessage>> {
         let mut conn = self.get_conn()?;
         
@@ -122,6 +134,8 @@ impl ConversationStore {
                     embedding_generated: false,
                 });
 
+                // Periodic commit check can be handled by outer logic or left to the full transaction
+                // Note: manual "COMMIT; BEGIN;" inside a rusqlite Transaction is generally discouraged.
             }
         }
         tx.commit()?;
@@ -130,9 +144,10 @@ impl ConversationStore {
         Ok(stored_messages)
     }
 
+    /// Store details in batch
     pub fn store_details_batch(
         &self,
-        details: &[(&str, i64, &str, &str, &str, f32)], 
+        details: &[(&str, i64, &str, &str, &str, f32)], // (session_id, message_id, type, content, context, importance)
     ) -> anyhow::Result<()> {
         if details.is_empty() { return Ok(()); }
         
@@ -154,6 +169,8 @@ impl ConversationStore {
         Ok(())
     }
 
+    // --- Session & Message Management ---
+
     pub fn create_session(&self, metadata: Option<SessionMetadata>) -> anyhow::Result<Session> {
         let session_id = Uuid::new_v4().to_string();
         let now = Utc::now();
@@ -169,6 +186,7 @@ impl ConversationStore {
         Ok(Session { id: session_id, created_at: now, last_accessed: now, metadata })
     }
 
+    /// Chat persistence: Create session with frontend-provided ID to maintain ID consistency across frontend and backend
     pub fn create_session_with_id(&self, session_id: &str, metadata: Option<SessionMetadata>) -> anyhow::Result<Session> {
         let now = Utc::now();
         let metadata = metadata.unwrap_or_default();
@@ -184,10 +202,14 @@ impl ConversationStore {
         Ok(Session { id: session_id.to_string(), created_at: now, last_accessed: now, metadata })
     }
 
+    /// Chat persistence: Update session title after auto-generation, also refresh last_accessed.
+    /// Handles the race condition where title update arrives before the session is created
+    /// by the streaming endpoint, using INSERT OR IGNORE to avoid UNIQUE constraint failures.
     pub fn update_session_title(&self, session_id: &str, title: &str) -> anyhow::Result<()> {
         let conn = self.get_conn()?;
         let now = Utc::now();
 
+        // Ensure the session exists first (INSERT OR IGNORE handles concurrent creation)
         let default_metadata = SessionMetadata {
             title: Some(title.to_string()),
             ..Default::default()
@@ -199,6 +221,7 @@ impl ConversationStore {
             params![session_id, now.to_rfc3339(), now.to_rfc3339(), default_metadata_json],
         )?;
 
+        // Now fetch and update metadata (session is guaranteed to exist)
         let mut stmt = conn.prepare("SELECT metadata FROM sessions WHERE id = ?1")?;
         let mut rows = stmt.query([session_id])?;
 
@@ -224,6 +247,7 @@ impl ConversationStore {
     pub fn update_session_pinned(&self, session_id: &str, pinned: bool) -> anyhow::Result<()> {
         let conn = self.get_conn()?;
         
+        // Fetch current metadata
         let mut stmt = conn.prepare("SELECT metadata FROM sessions WHERE id = ?1")?;
         let mut rows = stmt.query([session_id])?;
         
@@ -232,9 +256,12 @@ impl ConversationStore {
             let mut metadata: SessionMetadata = serde_json::from_str(&metadata_json)
                 .unwrap_or_default();
             
+            // Update pinned status
             metadata.pinned = pinned;
             let updated_metadata_json = serde_json::to_string(&metadata)?;
             
+            // Update session with new metadata only; pinning is a UI organization action
+            // and does not constitute accessing the conversation content, so don't update last_accessed
             conn.execute(
                 "UPDATE sessions SET metadata = ?1 WHERE id = ?2",
                 params![updated_metadata_json, session_id],
@@ -259,6 +286,7 @@ impl ConversationStore {
         }
     }
 
+    /// Chat persistence: Retrieve all sessions for sidebar display, ordered by recency
     pub fn get_all_sessions(&self) -> anyhow::Result<Vec<Session>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
@@ -273,6 +301,8 @@ impl ConversationStore {
         
         Ok(sessions)
     }
+
+    // --- Parsing Logic ---
 
     fn parse_datetime_safe(datetime_str: &str) -> Option<DateTime<Utc>> {
         if let Ok(dt) = DateTime::parse_from_rfc3339(datetime_str) {
@@ -321,6 +351,8 @@ impl ConversationStore {
         })
     }
 
+    // --- Standard Operations (Existing) ---
+
     pub fn get_session_messages(&self, session_id: &str, limit: Option<i32>, offset: Option<i32>) -> anyhow::Result<Vec<StoredMessage>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
@@ -356,6 +388,9 @@ impl ConversationStore {
         Ok(deleted)
     }
 
+    // --- New Method for Cache Management ---
+
+    /// Search messages by keywords
     pub async fn search_messages_by_keywords(
         &self,
         session_id: &str,
@@ -364,10 +399,12 @@ impl ConversationStore {
     ) -> anyhow::Result<Vec<StoredMessage>> {
         let conn = self.get_conn()?;
         
+        // Build search patterns
         let patterns: Vec<String> = keywords.iter()
             .map(|k| format!("%{}%", k.to_lowercase()))
             .collect();
         
+        // Build query
         let mut query = String::from(
             "SELECT id, session_id, message_index, role, content, tokens, 
                     timestamp, importance_score, embedding_generated
@@ -383,12 +420,13 @@ impl ConversationStore {
         
         let mut stmt = conn.prepare(&query)?;
         
+        // Build parameters
         let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
         params.push(&session_id);
         for pattern in &patterns {
             params.push(pattern);
         }
-        
+        // FIX: Store in variable to avoid temporary reference
         let limit_i64 = limit as i64;
         params.push(&limit_i64);
         
@@ -402,18 +440,21 @@ impl ConversationStore {
         Ok(messages)
     }
 
+    /// Search messages by topic keywords across sessions
     pub async fn search_messages_by_topic_across_sessions(
         &self,
         topic_keywords: &[String],
         limit: usize,
-        session_id_filter: Option<&str>, 
+        session_id_filter: Option<&str>, // Optional: exclude or include specific sessions
     ) -> anyhow::Result<Vec<StoredMessage>> {
         let conn = self.get_conn()?;
         
+        // Build search patterns
         let patterns: Vec<String> = topic_keywords.iter()
             .map(|k| format!("%{}%", k.to_lowercase()))
             .collect();
         
+        // Build query with session filtering
         let mut query = String::from(
             "SELECT m.id, m.session_id, m.message_index, m.role, m.content, 
                     m.tokens, m.timestamp, m.importance_score, m.embedding_generated
@@ -422,17 +463,20 @@ impl ConversationStore {
              WHERE 1=1"
         );
         
+        // Add session filter if provided - use Box<dyn ToSql> to store owned values
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if let Some(session_id) = session_id_filter {
             query.push_str(" AND m.session_id != ?");
-            params.push(Box::new(session_id.to_string())); 
+            params.push(Box::new(session_id.to_string())); // Store owned string
         }
         
+        // Add keyword search
         for pattern in &patterns {
             query.push_str(" AND LOWER(m.content) LIKE ?");
-            params.push(Box::new(pattern.clone())); 
+            params.push(Box::new(pattern.clone())); // Clone the pattern
         }
         
+        // Order by relevance (keyword matches + recency + importance)
         query.push_str(" ORDER BY 
             m.importance_score DESC,
             CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END, -- Prioritize assistant responses
@@ -440,11 +484,13 @@ impl ConversationStore {
             m.timestamp DESC
             LIMIT ?");
         
+        // Store limit in variable
         let limit_i64 = limit as i64;
         params.push(Box::new(limit_i64));
         
         let mut stmt = conn.prepare(&query)?;
         
+        // Convert params to references for the query
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter()
             .map(|p| p.as_ref())
             .collect();

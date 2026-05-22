@@ -1,3 +1,4 @@
+// Server/src/proxy.rs
 
 use axum::{
     body::Body,
@@ -16,6 +17,7 @@ use bytes::Bytes;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+// Import Message from memory module
 use crate::memory::Message;
 use crate::llm_integration::LLMEngine;
 
@@ -23,20 +25,24 @@ use crate::llm_integration::LLMEngine;
 pub struct AppState {
     pub llm_engine: Arc<LLMEngine>,
     pub cfg: crate::config::Config,
-    
+    // Removed proprietary context_orchestrator - available as extension
+    // pub context_orchestrator: Option<Arc<RwLock<Option<crate::context_engine::ContextOrchestrator>>>>,
 }
 
+/// Helper to optimize conversation history using the Context Engine
 async fn optimize_context(
     state: &AppState,
     messages: Vec<Message>,
     session_id: &str,
     user_query: Option<&str>,
 ) -> Vec<Message> {
-    
+    // Context optimization removed from core library - proprietary feature
+    // Available as separate extension
     warn!("Context optimization not available in core library");
     messages
 }
 
+/// A wrapper stream that captures the assistant's response as it flows through
 struct ConversationCapturer<S> {
     inner: S,
     state: AppState,
@@ -54,7 +60,8 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
-                
+                // Try to parse the chunk to extract content for our DB save
+                // OpenAI SSE format usually looks like: data: {"choices":[{"delta":{"content":"..."}}]}
                 let chunk_str = String::from_utf8_lossy(&bytes);
                 for line in chunk_str.lines() {
                     if line.starts_with("data: ") && !line.contains("[DONE]") {
@@ -68,14 +75,16 @@ where
                 Poll::Ready(Some(Ok(bytes)))
             }
             Poll::Ready(None) => {
-                
+                // Stream finished - Save assistant response to DB
                 let state = self.state.clone();
                 let session_id = self.session_id.clone();
                 let assistant_content = self.accumulated_response.clone();
 
+                // Spawn a background task so we don't block the stream closing
                 tokio::spawn(async move {
                     if !assistant_content.is_empty() {
-                        
+                        // Assistant response saving removed from core library - proprietary feature
+                        // Available as separate extension
                         warn!("Assistant response saving not available in core library");
                     }
                 });
@@ -119,11 +128,13 @@ pub async fn generate_stream_endpoint(
 
     let user_query = messages.last().map(|m| m.content.as_str());
 
+    // 2. OPTIMIZE CONTEXT with timing
     let context_start = std::time::Instant::now();
     info!("🔧 Starting context optimization...");
     let optimized_messages = optimize_context(&state, messages.clone(), &session_id, user_query).await;
     crate::metrics::observe_context_optimization(context_start.elapsed().as_secs_f64());
     
+    // 3. Generate response using LLM engine directly
     let backend_start = std::time::Instant::now();
     let llm_stream = match state.llm_engine.generate_stream(optimized_messages, session_id.clone()).await {
         Ok(stream) => stream,
@@ -134,13 +145,14 @@ pub async fn generate_stream_endpoint(
     };
     crate::metrics::observe_backend_latency(backend_start.elapsed().as_secs_f64());
 
+    // 5. Wrap stream to capture response and save to DB
     let inner_stream = llm_stream.map(|result| result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
 
     let captured_stream = ConversationCapturer {
         inner: inner_stream,
         state: state.clone(),
         session_id,
-        original_context: messages, 
+        original_context: messages, // We save the original context + the new assistant reply
         accumulated_response: String::new(),
     };
 
@@ -166,6 +178,8 @@ pub async fn generate_stream_endpoint(
         }
     }
 }
+
+// --- Helper Functions ---
 
 pub fn extract_openai_content(openai_response: &Value) -> String {
     openai_response["choices"][0]["message"]["content"]

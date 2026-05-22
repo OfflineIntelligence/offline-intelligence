@@ -1,3 +1,7 @@
+//! Local files store - manages persistent file metadata in database
+//!
+//! Files are stored with metadata in SQLite and actual content in the app data folder.
+//! Supports nested folder hierarchy.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -7,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use tracing::info;
 
+/// Represents a local file or directory
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalFile {
     pub id: i64,
@@ -21,6 +26,7 @@ pub struct LocalFile {
     pub modified_at: DateTime<Utc>,
 }
 
+/// Represents a file tree node with children (for nested display)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalFileTree {
     #[serde(flatten)]
@@ -29,24 +35,28 @@ pub struct LocalFileTree {
     pub children: Option<Vec<LocalFileTree>>,
 }
 
+/// Store for managing local files in database
 pub struct LocalFilesStore {
     pool: Arc<Pool<SqliteConnectionManager>>,
     app_data_dir: PathBuf,
 }
 
 impl LocalFilesStore {
-    
+    /// Create a new local files store
     pub fn new(pool: Arc<Pool<SqliteConnectionManager>>, app_data_dir: PathBuf) -> Self {
         Self { pool, app_data_dir }
     }
 
+    /// Get the app data directory path
     pub fn get_app_data_dir(&self) -> &Path {
         &self.app_data_dir
     }
 
+    /// Create a folder
     pub fn create_folder(&self, parent_id: Option<i64>, name: &str) -> anyhow::Result<LocalFile> {
         let conn = self.pool.get()?;
         
+        // Build the path
         let path = if let Some(pid) = parent_id {
             let parent_path: String = conn.query_row(
                 "SELECT path FROM local_files WHERE id = ?1",
@@ -68,6 +78,7 @@ impl LocalFilesStore {
 
         let id = conn.last_insert_rowid();
         
+        // Create actual directory in filesystem
         let fs_path = self.app_data_dir.join(&path);
         std::fs::create_dir_all(&fs_path)?;
         
@@ -76,6 +87,7 @@ impl LocalFilesStore {
         self.get_file(id)
     }
 
+    /// Upload a file
     pub fn upload_file(
         &self,
         parent_id: Option<i64>,
@@ -85,6 +97,7 @@ impl LocalFilesStore {
     ) -> anyhow::Result<LocalFile> {
         let conn = self.pool.get()?;
         
+        // Build the path
         let path = if let Some(pid) = parent_id {
             let parent_path: String = conn.query_row(
                 "SELECT path FROM local_files WHERE id = ?1",
@@ -96,6 +109,7 @@ impl LocalFilesStore {
             name.to_string()
         };
 
+        // Save file to filesystem
         let fs_path = self.app_data_dir.join(&path);
         if let Some(parent) = fs_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -105,6 +119,7 @@ impl LocalFilesStore {
         let now = chrono::Utc::now().to_rfc3339();
         let size = content.len() as i64;
         
+        // Check if file already exists (update) or create new
         let existing_id: Option<i64> = conn.query_row(
             "SELECT id FROM local_files WHERE parent_id IS ?1 AND name = ?2",
             rusqlite::params![parent_id, name],
@@ -112,7 +127,7 @@ impl LocalFilesStore {
         ).ok();
 
         let id = if let Some(existing) = existing_id {
-            
+            // Update existing file
             conn.execute(
                 "UPDATE local_files SET file_path = ?1, size_bytes = ?2, mime_type = ?3, modified_at = ?4
                  WHERE id = ?5",
@@ -120,7 +135,7 @@ impl LocalFilesStore {
             )?;
             existing
         } else {
-            
+            // Insert new file
             conn.execute(
                 "INSERT INTO local_files (name, path, parent_id, is_directory, file_path, size_bytes, mime_type, created_at, modified_at)
                  VALUES (?1, ?2, ?3, FALSE, ?2, ?4, ?5, ?6, ?6)",
@@ -134,6 +149,7 @@ impl LocalFilesStore {
         self.get_file(id)
     }
 
+    /// List files in a directory (or root if parent_id is None)
     pub fn list_files(&self, parent_id: Option<i64>) -> anyhow::Result<Vec<LocalFile>> {
         let conn = self.pool.get()?;
         
@@ -158,6 +174,7 @@ impl LocalFilesStore {
         Ok(files)
     }
 
+    /// Get a single file by ID
     pub fn get_file(&self, id: i64) -> anyhow::Result<LocalFile> {
         let conn = self.pool.get()?;
         
@@ -171,6 +188,7 @@ impl LocalFilesStore {
         Ok(file)
     }
 
+    /// Get file by path
     pub fn get_file_by_path(&self, path: &str) -> anyhow::Result<LocalFile> {
         let conn = self.pool.get()?;
         
@@ -184,6 +202,7 @@ impl LocalFilesStore {
         Ok(file)
     }
 
+    /// Get file by name (searches all files, returns first match)
     pub fn get_file_by_name(&self, name: &str) -> anyhow::Result<LocalFile> {
         let conn = self.pool.get()?;
         
@@ -198,6 +217,7 @@ impl LocalFilesStore {
         Ok(file)
     }
 
+    /// Check if an entry (file or folder) exists with given name and parent
     fn entry_exists(&self, parent_id: Option<i64>, name: &str) -> anyhow::Result<Option<LocalFile>> {
         let conn = self.pool.get()?;
         
@@ -224,6 +244,7 @@ impl LocalFilesStore {
         }
     }
 
+    /// Get file content by ID
     pub fn get_file_content(&self, id: i64) -> anyhow::Result<Vec<u8>> {
         let file = self.get_file(id)?;
         
@@ -238,16 +259,19 @@ impl LocalFilesStore {
         Ok(content)
     }
 
+    /// Get file content as string
     pub fn get_file_content_string(&self, id: i64) -> anyhow::Result<String> {
         let content = self.get_file_content(id)?;
         let text = String::from_utf8(content)?;
         Ok(text)
     }
 
+    /// Delete a file or folder (recursively)
     pub fn delete_file(&self, id: i64) -> anyhow::Result<()> {
         let file = self.get_file(id)?;
         let conn = self.pool.get()?;
         
+        // Delete from filesystem
         let fs_path = self.app_data_dir.join(&file.path);
         if file.is_directory {
             if fs_path.exists() {
@@ -257,6 +281,7 @@ impl LocalFilesStore {
             std::fs::remove_file(&fs_path)?;
         }
         
+        // Delete from database (CASCADE will handle children)
         conn.execute("DELETE FROM local_files WHERE id = ?1", [id])?;
         
         info!("Deleted: {} (id: {})", file.path, id);
@@ -264,6 +289,7 @@ impl LocalFilesStore {
         Ok(())
     }
 
+    /// Search files by name (partial match)
     pub fn search_files(&self, query: &str) -> anyhow::Result<Vec<LocalFile>> {
         let conn = self.pool.get()?;
         let pattern = format!("%{}%", query);
@@ -281,12 +307,14 @@ impl LocalFilesStore {
         Ok(files)
     }
 
+    /// Get the complete file tree (nested structure)
     pub fn get_file_tree(&self) -> anyhow::Result<Vec<LocalFileTree>> {
         let root_files = self.list_files(None)?;
         let tree = self.build_tree(root_files)?;
         Ok(tree)
     }
 
+    /// Build nested tree recursively
     fn build_tree(&self, files: Vec<LocalFile>) -> anyhow::Result<Vec<LocalFileTree>> {
         let mut tree = Vec::new();
         
@@ -308,6 +336,7 @@ impl LocalFilesStore {
         Ok(tree)
     }
 
+    /// Get all files (flat list)
     pub fn get_all_files(&self) -> anyhow::Result<Vec<LocalFile>> {
         let conn = self.pool.get()?;
         
@@ -323,6 +352,7 @@ impl LocalFilesStore {
         Ok(files)
     }
 
+    /// Helper to convert a row to LocalFile
     fn row_to_local_file(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalFile> {
         let created_at_str: String = row.get(8)?;
         let modified_at_str: String = row.get(9)?;
@@ -349,6 +379,7 @@ impl LocalFilesStore {
         })
     }
 
+    /// Sync filesystem with database (import existing files)
     pub fn sync_from_filesystem(&self) -> anyhow::Result<usize> {
         let mut imported = 0;
         
@@ -363,6 +394,7 @@ impl LocalFilesStore {
         Ok(imported)
     }
 
+    /// Clear all entries from local_files table (for cleanup/reset)
     pub fn clear_all(&self) -> anyhow::Result<usize> {
         let conn = self.pool.get()?;
         let deleted = conn.execute("DELETE FROM local_files", [])?;
@@ -370,9 +402,11 @@ impl LocalFilesStore {
         Ok(deleted)
     }
 
+    /// Import a directory recursively
     fn import_directory(&self, parent_id: Option<i64>, dir_path: &Path) -> anyhow::Result<usize> {
         let mut count = 0;
         
+        // System directories to exclude from local files browser
         const EXCLUDED_DIRS: &[&str] = &["models", "registry"];
         
         for entry in std::fs::read_dir(dir_path)? {
@@ -380,16 +414,18 @@ impl LocalFilesStore {
             let name = entry.file_name().to_string_lossy().to_string();
             let metadata = entry.metadata()?;
             
+            // Skip system files and excluded directories
             if name.starts_with('.') || name == "conversations.db" || name.ends_with("-wal") || name.ends_with("-shm") {
                 continue;
             }
             
+            // Skip system directories at root level
             if parent_id.is_none() && EXCLUDED_DIRS.contains(&name.as_str()) {
                 continue;
             }
             
             if metadata.is_dir() {
-                
+                // Check if folder exists in DB (by parent_id and name)
                 let folder_id = if let Some(existing) = self.entry_exists(parent_id, &name)? {
                     existing.id
                 } else {
@@ -398,9 +434,10 @@ impl LocalFilesStore {
                     folder.id
                 };
                 
+                // Recurse into subdirectory
                 count += self.import_directory(Some(folder_id), &entry.path())?;
             } else {
-                
+                // Check if file exists in DB (by parent_id and name)
                 if self.entry_exists(parent_id, &name)?.is_none() {
                     let content = std::fs::read(entry.path())?;
                     let mime = mime_guess::from_path(&entry.path())
@@ -416,3 +453,4 @@ impl LocalFilesStore {
         Ok(count)
     }
 }
+

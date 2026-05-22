@@ -1,3 +1,4 @@
+// offline-intelligence/crates/offline-intelligence/src/main.rs
 
 use offline_intelligence::{config::Config, run_thread_server};
 use dotenvy::dotenv;

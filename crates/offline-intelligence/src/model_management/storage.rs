@@ -1,9 +1,18 @@
+//! Model Storage Management
+//!
+//! Handles local storage of models in platform-appropriate locations:
+//! - Windows: %APPDATA%/OfflineIntelligence/models
+//! - Linux: ~/.local/share/OfflineIntelligence/models
+//! - macOS: ~/Library/Application Support/OfflineIntelligence/models
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
+/// Sanitize a model ID for use as a filesystem directory/file name.
+/// Replaces characters invalid on Windows (: / \ < > " | ? *) with underscores.
+/// Also trims trailing periods and spaces, handles reserved names, and limits length.
 fn sanitize_model_id(model_id: &str) -> String {
     let mut sanitized = model_id
         .replace(':', "_")
@@ -55,7 +64,7 @@ fn is_windows_reserved_name(name: &str) -> bool {
 /// Platform-specific storage location
 #[derive(Debug, Clone)]
 pub struct StorageLocation {
-    /// Base directory for all Aud.io data
+    /// Base directory for all Offline Intelligence data
     pub app_data_dir: PathBuf,
     /// Directory for storing downloaded models
     pub models_dir: PathBuf,
@@ -84,25 +93,9 @@ impl ModelStorage {
         Ok(Self { location })
     }
 
-    /// Get platform-appropriate storage location
+    /// Get platform-appropriate storage location.
     fn get_platform_storage_location() -> Result<StorageLocation> {
-        let app_data_dir = if cfg!(target_os = "windows") {
-            // Windows: %APPDATA%\Aud.io
-            dirs::data_dir()
-                .context("Failed to get APPDATA directory")?
-                .join("Aud.io")
-        } else if cfg!(target_os = "macos") {
-            // macOS: ~/Library/Application Support/Aud.io
-            dirs::data_dir()
-                .context("Failed to get Library directory")?
-                .join("Aud.io")
-        } else {
-            // Linux: ~/.local/share/aud.io
-            dirs::data_dir()
-                .context("Failed to get .local/share directory")?
-                .join("aud.io")
-        };
-
+        let app_data_dir = crate::utils::PathResolver::data_dir();
         let models_dir = app_data_dir.join("models");
         let registry_dir = app_data_dir.join("registry");
 
@@ -274,7 +267,7 @@ mod tests {
     fn test_storage_creation() -> Result<()> {
         // Create a temporary directory for testing
         let temp_dir = TempDir::new()?;
-        let test_base_dir = temp_dir.path().join("test_aud_io");
+        let test_base_dir = temp_dir.path().join("test_offline_intelligence");
 
         // Manually create the directory structure (simulating what ModelStorage::new() does)
         let app_data_dir = test_base_dir.join("app_data");

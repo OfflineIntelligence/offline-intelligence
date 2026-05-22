@@ -1,3 +1,5 @@
+// _Aud.CLI/_Server/metrics.rs
+// Lock-free metrics using atomic operations and OnceCell
 
 use prometheus::{Encoder, TextEncoder, Registry, IntCounterVec, IntGauge, Histogram};
 use lazy_static::lazy_static;
@@ -15,7 +17,7 @@ static QUEUE_DEPTH: OnceLock<IntGauge> = OnceLock::new();
 static QUEUE_WAIT_TIME: OnceLock<Histogram> = OnceLock::new();
 
 pub fn init_metrics() {
-    
+    // Initialize metrics once
     let req_counter = REQ_COUNTER.get_or_init(|| {
         IntCounterVec::new(
             prometheus::opts!("requests_total", "Total requests per route"),
@@ -44,6 +46,7 @@ pub fn init_metrics() {
     REGISTRY.register(Box::new(queue_wait_time.clone())).ok();
 }
 
+// Lock-free metric operations
 pub fn inc_request(route: &str, status: &str) {
     if let Some(counter) = REQ_COUNTER.get() {
         counter.with_label_values(&[route, status]).inc();

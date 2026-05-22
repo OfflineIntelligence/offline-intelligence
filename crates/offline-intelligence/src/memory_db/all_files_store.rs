@@ -1,3 +1,6 @@
+//! All Files store - unlimited storage for all file formats with folder support
+//!
+//! Files are stored with metadata in SQLite and actual content in the all_files folder.
 
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
@@ -7,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::info;
 
+/// Represents a file or directory in all_files storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AllFile {
     pub id: i64,
@@ -23,6 +27,7 @@ pub struct AllFile {
     pub access_count: i64,
 }
 
+/// Represents a file tree node with children (for nested display)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AllFileTree {
     #[serde(flatten)]
@@ -31,13 +36,14 @@ pub struct AllFileTree {
     pub children: Option<Vec<AllFileTree>>,
 }
 
+/// Store for managing all files in database
 pub struct AllFilesStore {
     pool: Arc<Pool<SqliteConnectionManager>>,
     all_files_dir: PathBuf,
 }
 
 impl AllFilesStore {
-    
+    /// Create a new all files store
     pub fn new(pool: Arc<Pool<SqliteConnectionManager>>, all_files_dir: PathBuf) -> Self {
         if !all_files_dir.exists() {
             if let Err(e) = std::fs::create_dir_all(&all_files_dir) {
@@ -50,10 +56,12 @@ impl AllFilesStore {
         }
     }
 
+    /// Get the all files directory path
     pub fn get_all_files_dir(&self) -> &Path {
         &self.all_files_dir
     }
 
+    /// Create a folder
     pub fn create_folder(&self, parent_id: Option<i64>, name: &str) -> anyhow::Result<AllFile> {
         let conn = self.pool.get()?;
 
@@ -85,6 +93,7 @@ impl AllFilesStore {
         self.get_file(id)
     }
 
+    /// Upload a file
     pub fn upload_file(
         &self,
         parent_id: Option<i64>,
@@ -113,6 +122,7 @@ impl AllFilesStore {
         let now = chrono::Utc::now().to_rfc3339();
         let size = content.len() as i64;
 
+        // Handle NULL parent_id specially for SQLite
         let existing_id: Option<i64> = if parent_id.is_none() {
             conn.query_row(
                 "SELECT id FROM all_files WHERE parent_id IS NULL AND name = ?1",
@@ -150,6 +160,7 @@ impl AllFilesStore {
         self.get_file(id)
     }
 
+    /// Upload multiple files with their directory structure
     pub fn upload_files_with_structure(
         &self,
         files: Vec<(Option<String>, String, Vec<u8>)>,
@@ -171,6 +182,7 @@ impl AllFilesStore {
                 filename.clone()
             };
 
+            // Split by both / and \ to handle Windows and Unix paths
             let parts: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
             let mut current_parent_id: Option<i64> = parent_id;
 
@@ -179,7 +191,7 @@ impl AllFilesStore {
                 let is_dir = !is_last;
 
                 if is_dir {
-                    
+                    // Handle NULL parent_id specially for SQLite
                     let existing_dir_id: Option<i64> = if current_parent_id.is_none() {
                         self.pool.get()?.query_row(
                             "SELECT id FROM all_files WHERE parent_id IS NULL AND name = ?1 AND is_directory = TRUE",
@@ -214,6 +226,7 @@ impl AllFilesStore {
         Ok(uploaded)
     }
 
+    /// Get file tree (nested)
     pub fn get_file_tree(&self) -> anyhow::Result<Vec<AllFileTree>> {
         let conn = self.pool.get()?;
 
@@ -312,6 +325,7 @@ impl AllFilesStore {
         }
     }
 
+    /// Get all files (flat list)
     pub fn get_all_files(&self) -> anyhow::Result<Vec<AllFile>> {
         let conn = self.pool.get()?;
 
@@ -351,6 +365,7 @@ impl AllFilesStore {
         Ok(files)
     }
 
+    /// Get single file by ID
     pub fn get_file(&self, id: i64) -> anyhow::Result<AllFile> {
         let conn = self.pool.get()?;
 
@@ -377,6 +392,7 @@ impl AllFilesStore {
         ).map_err(|e| anyhow::anyhow!("File not found: {}", e))
     }
 
+    /// Get file by path
     pub fn get_file_by_path(&self, path: &str) -> anyhow::Result<AllFile> {
         let conn = self.pool.get()?;
 
@@ -403,6 +419,7 @@ impl AllFilesStore {
         ).map_err(|e| anyhow::anyhow!("File not found: {}", e))
     }
 
+    /// Get file content as raw bytes (for binary-aware extraction)
     pub fn get_file_bytes(&self, id: i64) -> anyhow::Result<Vec<u8>> {
         let file = self.get_file(id)?;
 
@@ -418,6 +435,7 @@ impl AllFilesStore {
         std::fs::read(&fs_path).map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))
     }
 
+    /// Get file content as string (text files only — binary files return lossy UTF-8)
     pub fn get_file_content_string(&self, id: i64) -> anyhow::Result<String> {
         let file = self.get_file(id)?;
 
@@ -437,6 +455,7 @@ impl AllFilesStore {
             .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))
     }
 
+    /// Update access count
     pub fn record_access(&self, id: i64) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
         let now = chrono::Utc::now().to_rfc3339();
@@ -449,6 +468,7 @@ impl AllFilesStore {
         Ok(())
     }
 
+    /// Delete file or folder by ID
     pub fn delete_file(&self, id: i64) -> anyhow::Result<()> {
         let file = self.get_file(id)?;
 
@@ -488,6 +508,7 @@ impl AllFilesStore {
         Ok(())
     }
 
+    /// Search files by name
     pub fn search_files(&self, query: &str) -> anyhow::Result<Vec<AllFile>> {
         let conn = self.pool.get()?;
 

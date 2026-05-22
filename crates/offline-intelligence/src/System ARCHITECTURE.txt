@@ -1,4 +1,4 @@
-Aud.io /
+Offline Intelligence /
 
 ├── .env
 ├── .git/

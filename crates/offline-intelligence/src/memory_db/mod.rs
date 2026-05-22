@@ -1,3 +1,5 @@
+// "D:\_ProjectWorks\AUDIO_Interface\Server\src\memory_db\mod.rs"
+//! Memory database module - SQLite-based storage for conversations, summaries, embeddings, and local files
 
 pub mod schema;
 pub mod migration;
@@ -10,6 +12,7 @@ pub mod users_store;
 pub mod session_file_contexts_store;
 pub mod session_summaries_store;
 
+// Re-export commonly used types
 pub use schema::*;
 pub use migration::MigrationManager;
 pub use conversation_store::ConversationStore;
@@ -29,6 +32,7 @@ use tracing::info;
 use crate::cache_management::cache_extractor::KVEntry;
 use crate::cache_management::cache_manager::SessionCacheState;
 
+/// Main database manager that coordinates all stores
 pub struct MemoryDatabase {
     pub conversations: ConversationStore,
     pub embeddings: EmbeddingStore,
@@ -41,30 +45,33 @@ pub struct MemoryDatabase {
     pool: Arc<Pool<SqliteConnectionManager>>,
 }
 
+/// Transaction manager for atomic operations across stores
 pub struct Transaction<'a> {
     conn: r2d2::PooledConnection<SqliteConnectionManager>,
     _marker: std::marker::PhantomData<&'a MemoryDatabase>,
 }
 
 impl<'a> Transaction<'a> {
-    
+    /// Commit the transaction
     pub fn commit(self) -> anyhow::Result<()> {
-        
+        // Changes are automatically committed when the connection is dropped
         Ok(())
     }
 
+    /// Rollback the transaction
     pub fn rollback(self) -> anyhow::Result<()> {
-        
+        // SQLite auto-rolls back on DROP if not committed
         Ok(())
     }
 
+    /// Get raw connection for store operations
     pub fn connection(&mut self) -> &mut rusqlite::Connection {
         &mut self.conn
     }
 }
 
 impl MemoryDatabase {
-    
+    /// Create a new memory database at the specified path
     pub fn new(db_path: &Path) -> anyhow::Result<Self> {
         info!("Opening memory database at: {}", db_path.display());
 
@@ -80,10 +87,11 @@ impl MemoryDatabase {
             );
 
         let pool = Pool::builder()
-            .max_size(20)  
+            .max_size(20)  // 20 connections: enough for concurrent reads under load; WAL allows parallel readers
             .build(manager)
             .map_err(|e| anyhow::anyhow!("Failed to create connection pool: {}", e))?;
 
+        // Initialize DB and pragmas - FIXED: Use mutable connection
         {
             let mut conn = pool.get()?;
             let mut migrator = migration::MigrationManager::new(&mut conn);
@@ -99,17 +107,19 @@ impl MemoryDatabase {
 
         let pool = Arc::new(pool);
 
-        let app_data_dir = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("Aud.io");
+        // Get app data directory for local files
+        let app_data_dir = crate::utils::PathResolver::data_dir();
 
+        // Get all files directory (unlimited storage for all file formats)
         let all_files_dir = app_data_dir.join("all_files");
 
+        // Initialize API keys store
         let api_keys = ApiKeysStore::new(Arc::clone(&pool));
         if let Err(e) = api_keys.initialize_schema() {
             tracing::warn!("Failed to initialize API keys schema: {}", e);
         }
 
+        // Initialize users store
         let users = UsersStore::new(Arc::clone(&pool));
         if let Err(e) = users.initialize_schema() {
             tracing::warn!("Failed to initialize users schema: {}", e);
@@ -130,10 +140,11 @@ impl MemoryDatabase {
         })
     }
 
+    /// Create an in-memory database (useful for testing)
     pub fn new_in_memory() -> anyhow::Result<Self> {
         let manager = SqliteConnectionManager::memory();
         let pool = Pool::builder()
-            .max_size(10)  
+            .max_size(10)  // In-memory: 10 connections sufficient for test workloads
             .build(manager)?;
 
         {
@@ -143,17 +154,19 @@ impl MemoryDatabase {
 
         let pool = Arc::new(pool);
 
-        let app_data_dir = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("Aud.io");
+        // Get app data directory for local files
+        let app_data_dir = crate::utils::PathResolver::data_dir();
 
+        // Get all files directory (unlimited storage for all file formats)
         let all_files_dir = app_data_dir.join("all_files");
 
+        // Initialize API keys store
         let api_keys = ApiKeysStore::new(Arc::clone(&pool));
         if let Err(e) = api_keys.initialize_schema() {
             tracing::warn!("Failed to initialize API keys schema (in-memory): {}", e);
         }
 
+        // Initialize users store
         let users = UsersStore::new(Arc::clone(&pool));
         if let Err(e) = users.initialize_schema() {
             tracing::warn!("Failed to initialize users schema (in-memory): {}", e);
@@ -172,6 +185,7 @@ impl MemoryDatabase {
         })
     }
 
+    /// Begin a transaction for atomic operations
     pub fn begin_transaction(&self) -> anyhow::Result<Transaction<'_>> {
         let conn = self.pool.get()?;
         conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
@@ -181,6 +195,7 @@ impl MemoryDatabase {
         })
     }
 
+    /// Execute operations in a transaction
     pub fn with_transaction<T, F>(&self, f: F) -> anyhow::Result<T>
     where
         F: FnOnce(&mut Transaction<'_>) -> anyhow::Result<T>,
@@ -198,17 +213,20 @@ impl MemoryDatabase {
         }
     }
 
+    /// Get database statistics
     pub fn get_stats(&self) -> anyhow::Result<DatabaseStats> {
         let conn = self.pool.get()?;
         Ok(migration::get_database_stats(&conn)?)
     }
 
+    /// Cleanup old data (older than specified days)
     pub fn cleanup_old_data(&self, older_than_days: i32) -> anyhow::Result<usize> {
         let mut conn = self.pool.get()?;
         let mut migrator = migration::MigrationManager::new(&mut conn);
         Ok(migrator.cleanup_old_data(older_than_days)?)
     }
 
+    /// Create a KV snapshot
     pub async fn create_kv_snapshot(
         &self,
         session_id: &str,
@@ -216,22 +234,26 @@ impl MemoryDatabase {
     ) -> anyhow::Result<i64> {
         use blake3;
 
-        let mut conn = self.pool.get()?;  
+        let mut conn = self.pool.get()?;  // FIXED: Added mut
         let tx = conn.transaction()?;
         
+        // Calculate total size
         let total_size_bytes: usize = entries.iter()
             .map(|entry| entry.value_data.len())
             .sum();
         
+        // Serialize entries to BLOB
         let kv_state = bincode::serialize(entries)?;
         let kv_state_hash = blake3::hash(&kv_state).to_string();
         
+        // Get the latest message ID for this session
         let message_id: i64 = tx.query_row(
             "SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id = ?1",
             [session_id],
             |row| row.get(0),
         )?;
         
+        // Insert snapshot
         tx.execute(
             "INSERT INTO kv_snapshots 
              (session_id, message_id, kv_state, kv_state_hash, size_bytes)
@@ -241,6 +263,7 @@ impl MemoryDatabase {
         
         let snapshot_id = tx.last_insert_rowid();
         
+        // Insert individual cache entries
         for entry in entries {
             tx.execute(
                 "INSERT INTO kv_cache_entries 
@@ -261,6 +284,7 @@ impl MemoryDatabase {
             )?;
         }
         
+        // Update metadata
         let now = chrono::Utc::now().to_rfc3339();
         tx.execute(
             "INSERT OR REPLACE INTO kv_cache_metadata 
@@ -274,6 +298,7 @@ impl MemoryDatabase {
         Ok(snapshot_id)
     }
     
+    /// Get recent KV snapshots for a session
     pub async fn get_recent_kv_snapshots(
         &self,
         session_id: &str,
@@ -310,6 +335,7 @@ impl MemoryDatabase {
         Ok(snapshots)
     }
     
+    /// Get KV snapshot entries
     pub async fn get_kv_snapshot_entries(
         &self,
         snapshot_id: i64,
@@ -341,29 +367,31 @@ impl MemoryDatabase {
                 importance_score: row.get(6)?,
                 access_count: row.get(7)?,
                 last_accessed,
-                token_positions: None,  
-                embedding: None,      
-                size_bytes: { let val: Vec<u8> = row.get(2)?; val.len() as usize },  
-                is_persistent: false,  
+                token_positions: None,  // Not stored in DB, computed on demand
+                embedding: None,      // Not stored in DB, computed on demand
+                size_bytes: { let val: Vec<u8> = row.get(2)?; val.len() as usize },  // Calculate from value_data
+                is_persistent: false,  // Default value
             });
         }
         
         Ok(entries)
     }
     
+    /// Search messages by keywords (for ConversationStore)
     pub async fn search_messages_by_keywords(
         &self,
         session_id: &str,
         keywords: &[String],
         limit: usize,
     ) -> anyhow::Result<Vec<StoredMessage>> {
-        
+        // Simple keyword search using LIKE pattern
         let patterns: Vec<String> = keywords.iter()
             .map(|k| format!("%{}%", k))
             .collect();
         
         let conn = self.pool.get()?;
         
+        // Build query with multiple LIKE conditions
         let mut query = String::from(
             "SELECT id, session_id, message_index, role, content, tokens, 
                     timestamp, importance_score, embedding_generated
@@ -379,12 +407,13 @@ impl MemoryDatabase {
         
         let mut stmt = conn.prepare(&query)?;
         
+        // Build parameters: session_id + patterns + limit
         let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
         params.push(&session_id);
         for pattern in &patterns {
             params.push(pattern);
         }
-        
+        // FIX: Store in variable to avoid temporary reference
         let limit_i64 = limit as i64;
         params.push(&limit_i64);
         
@@ -413,6 +442,7 @@ impl MemoryDatabase {
         Ok(messages)
     }
     
+    /// Update KV cache metadata
     pub async fn update_kv_cache_metadata(
         &self,
         session_id: &str,
@@ -437,6 +467,7 @@ impl MemoryDatabase {
         Ok(())
     }
     
+    /// Cleanup session snapshots
     pub async fn cleanup_session_snapshots(
         &self,
         session_id: &str,
@@ -456,12 +487,14 @@ impl MemoryDatabase {
         Ok(())
     }
     
+    /// Prune old KV snapshots
     pub async fn prune_old_kv_snapshots(
         &self,
         keep_max: usize,
     ) -> anyhow::Result<usize> {
         let conn = self.pool.get()?;
         
+        // Get snapshot IDs to delete (keep only the latest keep_max per session)
         let mut stmt = conn.prepare(
             "SELECT ks.id 
              FROM kv_snapshots ks
@@ -481,6 +514,7 @@ impl MemoryDatabase {
             return Ok(0);
         }
         
+        // Delete snapshots
         let placeholders = vec!["?"; ids_to_delete.len()].join(",");
         let query = format!("DELETE FROM kv_snapshots WHERE id IN ({})", placeholders);
         
@@ -490,6 +524,11 @@ impl MemoryDatabase {
         Ok(deleted)
     }
 
+    /// Run SQLite maintenance: update query planner statistics and truncate the WAL file.
+    ///
+    /// `PRAGMA optimize` lets SQLite decide when to run `ANALYZE` — safe to call at any time.
+    /// `PRAGMA wal_checkpoint(TRUNCATE)` flushes the WAL to the main DB file and resets
+    /// the WAL to zero bytes, reclaiming disk space after heavy write sessions.
     pub fn optimize(&self) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
         conn.execute_batch(
@@ -503,7 +542,7 @@ impl MemoryDatabase {
 
 impl Drop for MemoryDatabase {
     fn drop(&mut self) {
-        
+        // Perform a final checkpoint on shutdown
         if let Ok(conn) = self.pool.get() {
             let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         }

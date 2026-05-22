@@ -1,3 +1,5 @@
+// Server/src/admin.rs
+// Simplified for 1-hop architecture - removed external process dependencies
 
 use axum::extract::{State, Json};
 use axum::http::StatusCode;
@@ -9,8 +11,6 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use std::sync::Arc;
 use sysinfo::System;
-use crate::cache_management::KVCacheManager;
-use crate::memory_db::MemoryDatabase;
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -32,19 +32,20 @@ pub struct StatusResponse {
     pub current_model: Option<String>,
     pub current_port: Option<u16>,
     pub gpu_layers: Option<u32>,
-    pub ctx_size: Option<u32>,        
-    pub batch_size: Option<u32>,      
+    pub ctx_size: Option<u32>,        // Add context size
+    pub batch_size: Option<u32>,      // Add batch size
     pub is_healthy: bool,
     pub uptime_seconds: Option<u64>,
-    pub memory_usage: Option<String>, 
+    pub memory_usage: Option<String>, // Add memory info
 }
 
 pub async fn get_status(
     State(state): State<AdminState>,
 ) -> impl IntoResponse {
+    // Simplified status for 1-hop architecture
+    let is_healthy = true; // Always healthy in direct memory access
     
-    let is_healthy = true; 
-    
+    // Memory info
     let memory_usage = {
         let mut sys = System::new_all();
         sys.refresh_memory();
@@ -75,6 +76,8 @@ pub async fn load_model(
     info!("Received load model request for: {} with ctx_size: {:?}, gpu_layers: {:?}", 
           req.model_path, req.ctx_size, req.gpu_layers);
     
+    // In 1-hop architecture, model loading happens directly through shared state
+    // This is a placeholder implementation
     metrics::inc_request("admin_load", "ok");
     (StatusCode::OK, format!("Model loading initiated: {}", req.model_path))
 }
@@ -84,6 +87,7 @@ pub async fn stop_backend(
 ) -> impl IntoResponse {
     info!("Graceful shutdown initiated");
 
+    // Clone Arc references outside the lock to avoid holding guards across await points
     let cache_mgr = state.shared_state.cache_manager.read()
         .ok()
         .and_then(|guard| guard.clone());
@@ -97,6 +101,7 @@ pub async fn stop_backend(
         }
     }
 
+    // Clone runtime manager Arc outside the lock
     let rt_mgr = state.shared_state.runtime_manager.read()
         .ok()
         .and_then(|guard| guard.clone());
@@ -113,3 +118,4 @@ pub async fn stop_backend(
     metrics::inc_request("admin_stop", "ok");
     (StatusCode::OK, "System shutdown initiated".to_string())
 }
+

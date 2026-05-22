@@ -1,3 +1,4 @@
+//! Context engine module - Orchestrates context memory system
 
 pub mod retrieval_planner;
 pub mod tier_manager;
@@ -11,6 +12,8 @@ pub use context_builder::{ContextBuilder, ContextBuilderConfig};
 pub use orchestrator::{ContextOrchestrator, OrchestratorConfig, SessionStats, CleanupStats};
 pub use smart_retrieval::{SmartRetrieval, SmartRetrievalConfig, RetrievalResult, RetrievalStrategy};
 
+/// Create a Context Orchestrator with limits derived from the model's context window.
+/// Pass `ctx_size` from `Config.ctx_size` — all token budgets are derived from it automatically.
 pub async fn create_default_orchestrator(
     database: std::sync::Arc<crate::memory_db::MemoryDatabase>,
     ctx_size: u32,

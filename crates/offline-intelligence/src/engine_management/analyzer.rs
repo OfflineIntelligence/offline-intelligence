@@ -1,10 +1,15 @@
+//! Hardware Analyzer
+//!
+//! Enhanced hardware detection and profiling for engine compatibility analysis.
+//! Extends the existing platform detection with detailed capability assessment.
 
 use crate::model_runtime::platform_detector::{HardwareCapabilities, Platform, HardwareArchitecture};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use tracing::{debug, info};
+use tracing::debug;
 
+/// Detailed hardware profile for engine compatibility analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareProfile {
     pub platform: Platform,
@@ -17,12 +22,13 @@ pub struct HardwareProfile {
     pub system_info: SystemInfo,
 }
 
+// Static cache for hardware profiles
 static PROFILE_CACHE: OnceLock<HardwareProfile> = OnceLock::new();
 
 impl HardwareProfile {
-    
+    /// Analyze hardware capabilities to create a detailed profile (cached)
     pub async fn analyze(capabilities: &HardwareCapabilities) -> Result<Self, Box<dyn std::error::Error>> {
-        
+        // Return cached result if available
         if let Some(cached) = PROFILE_CACHE.get() {
             return Ok(cached.clone());
         }
@@ -30,12 +36,14 @@ impl HardwareProfile {
         let analyzer = HardwareAnalyzer::new(capabilities.clone());
         let profile = analyzer.get_hardware_profile();
         
+        // Cache the result
         let _ = PROFILE_CACHE.set(profile.clone());
         
         Ok(profile)
     }
 }
 
+/// Information about available GPUs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GPUInfo {
     pub vendor: String,
@@ -45,6 +53,7 @@ pub struct GPUInfo {
     pub driver_version: Option<String>,
 }
 
+/// General system information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemInfo {
     pub os_name: String,
@@ -52,6 +61,7 @@ pub struct SystemInfo {
     pub kernel_version: Option<String>,
 }
 
+/// Analyzes hardware capabilities for engine compatibility
 pub struct HardwareAnalyzer {
     capabilities: HardwareCapabilities,
 }
@@ -61,6 +71,7 @@ impl HardwareAnalyzer {
         Self { capabilities }
     }
 
+    /// Get detailed hardware profile
     pub fn get_hardware_profile(&self) -> HardwareProfile {
         let system_info = self.detect_system_info();
         let gpu_info = self.detect_gpu_info();
@@ -79,12 +90,14 @@ impl HardwareAnalyzer {
         }
     }
 
+    /// Detect CPU core count
     fn detect_cpu_cores(&self) -> u32 {
         let logical_cores = num_cpus::get() as u32;
         debug!("Detected {} logical CPU cores", logical_cores);
         logical_cores
     }
 
+    /// Detect memory information
     fn detect_memory_info(&self) -> MemoryInfo {
         let mut system = sysinfo::System::new_all();
         system.refresh_memory();
@@ -103,6 +116,7 @@ impl HardwareAnalyzer {
         }
     }
 
+    /// Detect GPU information
     fn detect_gpu_info(&self) -> Option<GPUInfo> {
         match &self.capabilities.platform {
             Platform::Windows => self.detect_windows_gpu(),
@@ -111,6 +125,10 @@ impl HardwareAnalyzer {
         }
     }
 
+    /// Detect Windows GPU information.
+    ///
+    /// Queries all video controllers via PowerShell and returns the most capable
+    /// one in priority order: NVIDIA > AMD/Radeon > Intel Arc > other.
     fn detect_windows_gpu(&self) -> Option<GPUInfo> {
         #[cfg(target_os = "windows")]
         {
@@ -124,28 +142,73 @@ impl HardwareAnalyzer {
                 ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
-                .creation_flags(0x08000000) 
+                .creation_flags(0x08000000)
                 .spawn();
 
             if let Ok(mut process) = child {
                 let start = std::time::Instant::now();
                 loop {
                     match process.try_wait() {
-                        Ok(Some(status)) => {
-                            if status.success() {
-                                if let Ok(output) = process.wait_with_output() {
-                                    let stdout = String::from_utf8_lossy(&output.stdout);
-                                    for line in stdout.lines() {
-                                        let trimmed = line.trim();
-                                        if trimmed.contains("NVIDIA") {
-                                            return Some(GPUInfo {
-                                                vendor: "NVIDIA".to_string(),
-                                                model: trimmed.to_string(),
-                                                memory_gb: 0.0,
-                                                compute_capability: None,
-                                                driver_version: None,
-                                            });
-                                        }
+                        Ok(Some(_)) => {
+                            if let Ok(output) = process.wait_with_output() {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                // Collect all GPU names, then pick by priority
+                                let lines: Vec<&str> = stdout.lines()
+                                    .map(|l| l.trim())
+                                    .filter(|l| !l.is_empty())
+                                    .collect();
+
+                                // Priority 1: NVIDIA
+                                for line in &lines {
+                                    let u = line.to_uppercase();
+                                    if u.contains("NVIDIA") {
+                                        return Some(GPUInfo {
+                                            vendor: "NVIDIA".to_string(),
+                                            model: line.to_string(),
+                                            memory_gb: 0.0,
+                                            compute_capability: None,
+                                            driver_version: None,
+                                        });
+                                    }
+                                }
+                                // Priority 2: AMD / Radeon
+                                for line in &lines {
+                                    let u = line.to_uppercase();
+                                    if u.contains("AMD") || u.contains("RADEON") || u.contains("ATI") {
+                                        return Some(GPUInfo {
+                                            vendor: "AMD".to_string(),
+                                            model: line.to_string(),
+                                            memory_gb: 0.0,
+                                            compute_capability: Some("Vulkan".to_string()),
+                                            driver_version: None,
+                                        });
+                                    }
+                                }
+                                // Priority 3: Intel Arc (discrete — not integrated)
+                                for line in &lines {
+                                    let u = line.to_uppercase();
+                                    if u.contains("INTEL") && u.contains("ARC") {
+                                        return Some(GPUInfo {
+                                            vendor: "Intel".to_string(),
+                                            model: line.to_string(),
+                                            memory_gb: 0.0,
+                                            compute_capability: Some("Vulkan".to_string()),
+                                            driver_version: None,
+                                        });
+                                    }
+                                }
+                                // Intel integrated — we still report it but callers
+                                // can check vendor == "Intel" and fall back to CPU.
+                                for line in &lines {
+                                    let u = line.to_uppercase();
+                                    if u.contains("INTEL") {
+                                        return Some(GPUInfo {
+                                            vendor: "Intel".to_string(),
+                                            model: line.to_string(),
+                                            memory_gb: 0.0,
+                                            compute_capability: None,
+                                            driver_version: None,
+                                        });
                                     }
                                 }
                             }
@@ -166,6 +229,7 @@ impl HardwareAnalyzer {
             }
         }
 
+        // Fallback: use already-detected flags
         if self.capabilities.has_cuda {
             Some(GPUInfo {
                 vendor: "NVIDIA".to_string(),
@@ -174,14 +238,24 @@ impl HardwareAnalyzer {
                 compute_capability: None,
                 driver_version: None,
             })
+        } else if self.capabilities.has_amd_gpu {
+            Some(GPUInfo {
+                vendor: "AMD".to_string(),
+                model: "Unknown AMD GPU".to_string(),
+                memory_gb: 0.0,
+                compute_capability: Some("Vulkan".to_string()),
+                driver_version: None,
+            })
         } else {
             None
         }
     }
 
+    /// Detect Linux GPU information
     fn detect_linux_gpu(&self) -> Option<GPUInfo> {
         use std::process::{Command, Stdio};
 
+        // Try lspci with timeout to prevent hangs
         let child = Command::new("lspci")
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -194,25 +268,42 @@ impl HardwareAnalyzer {
                     Ok(Some(_)) => {
                         if let Ok(output) = process.wait_with_output() {
                             let stdout = String::from_utf8_lossy(&output.stdout);
-                            for line in stdout.lines() {
-                                if line.contains("VGA compatible controller") || line.contains("3D controller") {
-                                    if line.contains("NVIDIA") {
-                                        return Some(GPUInfo {
-                                            vendor: "NVIDIA".to_string(),
-                                            model: line.split(": ").nth(1).unwrap_or("Unknown").to_string(),
-                                            memory_gb: 0.0,
-                                            compute_capability: None,
-                                            driver_version: None,
-                                        });
-                                    } else if line.contains("AMD") || line.contains("ATI") {
-                                        return Some(GPUInfo {
-                                            vendor: "AMD".to_string(),
-                                            model: line.split(": ").nth(1).unwrap_or("Unknown").to_string(),
-                                            memory_gb: 0.0,
-                                            compute_capability: None,
-                                            driver_version: None,
-                                        });
-                                    }
+                            let gpu_lines: Vec<&str> = stdout.lines()
+                                .filter(|l| l.contains("VGA compatible controller") || l.contains("3D controller"))
+                                .collect();
+
+                            // Priority: NVIDIA > AMD > Intel
+                            for line in &gpu_lines {
+                                if line.contains("NVIDIA") {
+                                    return Some(GPUInfo {
+                                        vendor: "NVIDIA".to_string(),
+                                        model: line.split(": ").nth(1).unwrap_or("Unknown").to_string(),
+                                        memory_gb: 0.0,
+                                        compute_capability: None,
+                                        driver_version: None,
+                                    });
+                                }
+                            }
+                            for line in &gpu_lines {
+                                if line.contains("AMD") || line.contains("ATI") || line.contains("Radeon") {
+                                    return Some(GPUInfo {
+                                        vendor: "AMD".to_string(),
+                                        model: line.split(": ").nth(1).unwrap_or("Unknown").to_string(),
+                                        memory_gb: 0.0,
+                                        compute_capability: Some("Vulkan".to_string()),
+                                        driver_version: None,
+                                    });
+                                }
+                            }
+                            for line in &gpu_lines {
+                                if line.contains("Intel") {
+                                    return Some(GPUInfo {
+                                        vendor: "Intel".to_string(),
+                                        model: line.split(": ").nth(1).unwrap_or("Unknown").to_string(),
+                                        memory_gb: 0.0,
+                                        compute_capability: None,
+                                        driver_version: None,
+                                    });
                                 }
                             }
                         }
@@ -235,10 +326,12 @@ impl HardwareAnalyzer {
         None
     }
 
+    /// Detect macOS GPU information
     fn detect_macos_gpu(&self) -> Option<GPUInfo> {
         #[cfg(target_os = "macos")]
         {
-            
+            // On macOS, Metal support is the key indicator - skip slow system_profiler call
+            // and use the already-detected has_metal flag from HardwareCapabilities
             if self.capabilities.has_metal {
                 return Some(GPUInfo {
                     vendor: "Apple".to_string(),
@@ -253,15 +346,20 @@ impl HardwareAnalyzer {
         None
     }
 
+    /// Detect acceleration support capabilities
     fn detect_acceleration_support(&self, _gpu_info: &Option<GPUInfo>) -> HashMap<String, bool> {
         let mut support = HashMap::new();
         
+        // CPU support is always available
         support.insert("cpu".to_string(), true);
         
+        // Platform-specific acceleration
         match &self.capabilities.platform {
             Platform::Windows => {
                 support.insert("cuda".to_string(), self.capabilities.has_cuda);
-                support.insert("directml".to_string(), true); 
+                support.insert("vulkan".to_string(), self.capabilities.has_vulkan);
+                support.insert("amd_gpu".to_string(), self.capabilities.has_amd_gpu);
+                support.insert("directml".to_string(), true);
             }
             Platform::MacOS => {
                 support.insert("metal".to_string(), self.capabilities.has_metal);
@@ -269,35 +367,24 @@ impl HardwareAnalyzer {
             Platform::Linux => {
                 support.insert("cuda".to_string(), self.capabilities.has_cuda);
                 support.insert("vulkan".to_string(), self.capabilities.has_vulkan);
-                
-                support.insert("rocm".to_string(), self.detect_rocm_support());
+                support.insert("amd_gpu".to_string(), self.capabilities.has_amd_gpu);
+                support.insert("rocm".to_string(), self.capabilities.has_rocm);
             }
         }
         
+        // Check for OpenCL support
         support.insert("opencl".to_string(), self.detect_opencl_support());
         
         debug!("Acceleration support: {:?}", support);
         support
     }
 
-    fn detect_rocm_support(&self) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            use std::path::Path;
-            
-            Path::new("/opt/rocm").exists() || Path::new("/usr/lib/rocm").exists()
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            false
-        }
-    }
-
+    /// Detect OpenCL support
     fn detect_opencl_support(&self) -> bool {
-        
+        // Simplified check - in practice you'd want to enumerate OpenCL platforms
         match &self.capabilities.platform {
             Platform::Windows => {
-                
+                // Check for OpenCL ICD loader
                 std::path::Path::new("C:\\Windows\\System32\\OpenCL.dll").exists()
             }
             Platform::Linux => {
@@ -305,12 +392,13 @@ impl HardwareAnalyzer {
                 std::path::Path::new("/usr/lib/x86_64-linux-gnu/libOpenCL.so").exists()
             }
             Platform::MacOS => {
-                
+                // OpenCL is deprecated on macOS but still available
                 true
             }
         }
     }
 
+    /// Detect system information
     fn detect_system_info(&self) -> SystemInfo {
         SystemInfo {
             os_name: std::env::consts::OS.to_string(),
@@ -319,10 +407,12 @@ impl HardwareAnalyzer {
         }
     }
 
+    /// Get compatibility recommendations for engines
     pub fn get_engine_recommendations(&self) -> Vec<EngineRecommendation> {
         let profile = self.get_hardware_profile();
         let mut recommendations = Vec::new();
         
+        // CPU recommendation (always available)
         recommendations.push(EngineRecommendation {
             engine_type: "CPU".to_string(),
             priority: 1,
@@ -330,6 +420,7 @@ impl HardwareAnalyzer {
             estimated_performance: self.estimate_cpu_performance(&profile),
         });
         
+        // GPU recommendations based on detected hardware
         if profile.acceleration_support.get("cuda").copied().unwrap_or(false) {
             recommendations.push(EngineRecommendation {
                 engine_type: "CUDA".to_string(),
@@ -357,10 +448,12 @@ impl HardwareAnalyzer {
             });
         }
         
+        // Sort by priority
         recommendations.sort_by(|a, b| a.priority.cmp(&b.priority));
         recommendations
     }
 
+    /// Estimate CPU performance
     fn estimate_cpu_performance(&self, profile: &HardwareProfile) -> PerformanceEstimate {
         let core_multiplier = profile.cpu_cores as f32;
         let memory_multiplier = (profile.available_memory_gb / 8.0).min(4.0);
@@ -369,19 +462,20 @@ impl HardwareAnalyzer {
         PerformanceEstimate {
             inference_speed: base_score * core_multiplier * memory_multiplier * 0.1,
             memory_efficiency: (profile.available_memory_gb / profile.total_memory_gb) * 100.0,
-            power_efficiency: 70.0, 
+            power_efficiency: 70.0, // CPUs are generally less power efficient than GPUs
         }
     }
 
+    /// Estimate CUDA performance
     fn estimate_cuda_performance(&self, profile: &HardwareProfile) -> PerformanceEstimate {
         if let Some(gpu) = &profile.gpu_info {
-            let memory_score = gpu.memory_gb * 10.0; 
+            let memory_score = gpu.memory_gb * 10.0; // Rough estimation
             let base_score = 80.0;
             
             PerformanceEstimate {
                 inference_speed: base_score + memory_score,
-                memory_efficiency: 90.0, 
-                power_efficiency: 85.0, 
+                memory_efficiency: 90.0, // GPUs excel at memory efficiency
+                power_efficiency: 85.0, // Modern GPUs are quite power efficient
             }
         } else {
             PerformanceEstimate {
@@ -392,17 +486,19 @@ impl HardwareAnalyzer {
         }
     }
 
+    /// Estimate Metal performance
     fn estimate_metal_performance(&self, _profile: &HardwareProfile) -> PerformanceEstimate {
-        
+        // Apple Silicon typically has excellent unified memory performance
         PerformanceEstimate {
             inference_speed: 75.0,
-            memory_efficiency: 95.0, 
-            power_efficiency: 90.0, 
+            memory_efficiency: 95.0, // Unified memory architecture
+            power_efficiency: 90.0, // Apple Silicon is very power efficient
         }
     }
 
+    /// Estimate Vulkan performance
     fn estimate_vulkan_performance(&self, _profile: &HardwareProfile) -> PerformanceEstimate {
-        
+        // Vulkan performance varies significantly by GPU
         PerformanceEstimate {
             inference_speed: 70.0,
             memory_efficiency: 85.0,
@@ -411,12 +507,14 @@ impl HardwareAnalyzer {
     }
 }
 
+/// Memory information structure
 #[derive(Debug)]
 struct MemoryInfo {
     total_gb: f32,
     available_gb: f32,
 }
 
+/// Engine recommendation with priority
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct EngineRecommendation {
     pub engine_type: String,
@@ -425,9 +523,10 @@ pub struct EngineRecommendation {
     pub estimated_performance: PerformanceEstimate,
 }
 
+/// Performance estimates for different engine types
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct PerformanceEstimate {
-    pub inference_speed: f32,      
-    pub memory_efficiency: f32,    
-    pub power_efficiency: f32,     
+    pub inference_speed: f32,      // Relative speed score (higher is better)
+    pub memory_efficiency: f32,    // Percentage (0-100)
+    pub power_efficiency: f32,     // Percentage (0-100)
 }

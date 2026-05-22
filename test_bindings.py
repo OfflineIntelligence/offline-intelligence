@@ -13,10 +13,12 @@ def test_python_binding():
     print("🐍 Testing Python binding...")
     
     try:
-
+        # Test importing the binding
         import pybind11
         print("✅ Python binding framework available")
         
+        # In a real scenario, we'd test the actual binding
+        # For now, just verify the structure exists
         python_binding_path = Path("bindings/python/src/main.cpp")
         if python_binding_path.exists():
             print("✅ Python binding source exists")

@@ -1,3 +1,6 @@
+//! Format Detector
+//!
+//! Automatically detects model format from file extension
 
 use super::runtime_trait::ModelFormat;
 use std::path::Path;
@@ -6,23 +9,23 @@ use tracing::info;
 pub struct FormatDetector;
 
 impl FormatDetector {
-    
+    /// Detect model format from file extension
     pub fn detect_from_path(path: &Path) -> Option<ModelFormat> {
         let extension = path.extension()?.to_str()?.to_lowercase();
         
         let format = if ModelFormat::GGUF.extensions().contains(&extension.as_str()) {
             Some(ModelFormat::GGUF)
         } else if ModelFormat::GGML.extensions().contains(&extension.as_str()) {
-            
+            // Need to disambiguate .bin files (could be GGML or other)
             if extension == "ggml" {
                 Some(ModelFormat::GGML)
             } else if extension == "bin" {
-                
+                // Check filename for hints
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                     if filename.contains("ggml") {
                         Some(ModelFormat::GGML)
                     } else {
-                        None 
+                        None // Ambiguous .bin file
                     }
                 } else {
                     None
@@ -49,6 +52,7 @@ impl FormatDetector {
         format
     }
 
+    /// List all supported extensions
     pub fn supported_extensions() -> Vec<String> {
         let mut exts = Vec::new();
         for format in &[

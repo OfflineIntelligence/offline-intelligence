@@ -1,3 +1,6 @@
+//! Currency & crypto tool.
+//!   - Fiat: ExchangeRate-API v4 (keyless, 160+ currencies including INR/PKR/BDT)
+//!   - Crypto: CoinGecko simple price endpoint (keyless on free tier)
 
 use anyhow::Result;
 use serde_json::Value;
@@ -6,6 +9,7 @@ use super::Source;
 const EXCHANGERATE_URL: &str = "https://api.exchangerate-api.com/v4/latest";
 const COINGECKO_URL: &str = "https://api.coingecko.com/api/v3/simple/price";
 
+/// Fiat currency conversion via ExchangeRate-API v4 (160+ currencies, updated daily).
 pub async fn convert_fiat(
     client: &reqwest::Client,
     from: &str,
@@ -48,10 +52,11 @@ pub async fn convert_fiat(
     Ok((sources, context))
 }
 
+/// Crypto price lookup via CoinGecko simple price endpoint.
 pub async fn get_crypto_price(
     client: &reqwest::Client,
-    coin_id: &str,   
-    vs: &str,        
+    coin_id: &str,   // e.g., "bitcoin", "ethereum"
+    vs: &str,        // e.g., "usd"
 ) -> Result<(Vec<Source>, String)> {
     let resp: Value = client
         .get(COINGECKO_URL)

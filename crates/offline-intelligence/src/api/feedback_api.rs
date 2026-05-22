@@ -1,4 +1,4 @@
-
+// Feedback API: receives user feedback, saves locally, and optionally emails admin
 use axum::{
     extract::Json,
     http::StatusCode,
@@ -34,6 +34,7 @@ pub async fn submit_feedback(
 
     info!("Received feedback submission ({} chars)", payload.message.len());
 
+    // Always save feedback locally first
     if let Err(e) = save_feedback_locally(&payload) {
         error!("Failed to save feedback locally: {}", e);
         return (
@@ -47,6 +48,7 @@ pub async fn submit_feedback(
 
     info!("Feedback saved locally");
 
+    // Try to send email if SMTP is configured (non-blocking — don't fail if email fails)
     match send_feedback_email(&payload).await {
         Ok(feedback_number) => info!("Feedback email #{} sent to product team", feedback_number),
         Err(e) => warn!("Email not sent (SMTP may not be configured): {}", e),
@@ -61,15 +63,13 @@ pub async fn submit_feedback(
     )
 }
 
-fn aud_io_data_dir() -> std::path::PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-        .join("Aud.io")
-        .join("data")
+/// Returns the data sub-directory used for feedback and related logs.
+fn offline_intelligence_data_dir() -> std::path::PathBuf {
+    crate::utils::PathResolver::data_dir().join("data")
 }
 
 fn save_feedback_locally(payload: &FeedbackRequest) -> Result<(), Box<dyn std::error::Error>> {
-    let db_dir = aud_io_data_dir();
+    let db_dir = offline_intelligence_data_dir();
     std::fs::create_dir_all(&db_dir)?;
 
     let conn = rusqlite::Connection::open(db_dir.join("feedback.db"))?;
@@ -91,9 +91,11 @@ fn save_feedback_locally(payload: &FeedbackRequest) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// Get the next feedback number for sequential tracking
 fn get_next_feedback_number() -> u64 {
-    let counter_path = aud_io_data_dir().join("feedback_counter.txt");
+    let counter_path = offline_intelligence_data_dir().join("feedback_counter.txt");
     
+    // Read current counter
     let current = if counter_path.exists() {
         std::fs::read_to_string(&counter_path)
             .ok()
@@ -105,6 +107,7 @@ fn get_next_feedback_number() -> u64 {
     
     let next = current + 1;
     
+    // Save next counter
     if let Some(parent) = counter_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -120,6 +123,8 @@ async fn send_feedback_email(payload: &FeedbackRequest) -> Result<u64, Box<dyn s
         transport::smtp::authentication::Credentials,
     };
 
+    // Runtime env vars take priority; fall back to values baked in at compile time
+    // by build.rs so that installed/distributed builds (no .env file) still work.
     let smtp_user = std::env::var("SMTP_USER")
         .unwrap_or_else(|_| option_env!("SMTP_USER").unwrap_or("").to_string());
     let smtp_pass = std::env::var("SMTP_PASS")
@@ -136,15 +141,19 @@ async fn send_feedback_email(payload: &FeedbackRequest) -> Result<u64, Box<dyn s
         .parse()
         .unwrap_or(587);
 
+    // Get sequential feedback number
     let feedback_number = get_next_feedback_number();
 
-    let from_address = format!("Aud.io Feedback <{}>", smtp_user);
+    // Always send FROM the authenticated SMTP user to avoid sender rejection
+    // Use Reply-To for the user's email so admin can respond directly
+    let from_address = format!("Offline Intelligence Feedback <{}>", smtp_user);
     
     let mut email_builder = Message::builder()
         .from(from_address.parse()?)
         .to("Product Team <product@offlineintelligence.io>".parse()?)
-        .subject(format!("FEEDBACK #{} - _Aud.io User Feedback", feedback_number));
+        .subject(format!("FEEDBACK #{} - Offline Intelligence User Feedback", feedback_number));
     
+    // Add Reply-To header if user provided email
     if !payload.email.is_empty() {
         email_builder = email_builder.reply_to(payload.email.parse()?);
     }
@@ -152,7 +161,7 @@ async fn send_feedback_email(payload: &FeedbackRequest) -> Result<u64, Box<dyn s
     let email = email_builder
         .header(ContentType::TEXT_PLAIN)
         .body(format!(
-            "FEEDBACK #{}\n\nNew feedback from _Aud.io user:\n\n{}\n\n---\nUser email: {}",
+            "FEEDBACK #{}\n\nNew feedback from Offline Intelligence user:\n\n{}\n\n---\nUser email: {}",
             feedback_number,
             payload.message,
             if payload.email.is_empty() { "Not provided" } else { &payload.email }

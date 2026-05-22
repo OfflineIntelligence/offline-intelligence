@@ -1,3 +1,5 @@
+# OFFLINE INTELLIGENCE LIBRARY
+# Multi-Language Distribution Workspace
 
 [workspace]
 members = [
@@ -8,8 +10,9 @@ resolver = "2"
 [workspace.dependencies]
 offline-intelligence = { path = "crates/offline-intelligence" }
 
+# Workspace-wide configuration for library distribution
 [profile.release]
-strip = "symbols"
-lto = "thin"
-codegen-units = 1
-panic = "abort"
+strip = "symbols"  # Remove debug symbols for smaller binaries
+lto = "thin"       # Enable link-time optimization
+codegen-units = 1  # Optimize for size/performance
+panic = "abort"    # Reduce binary size with abort-on-panic
